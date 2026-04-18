@@ -20,6 +20,12 @@
 | ~~9~~ | ~~Remove dead `handleClientError` on adapter class~~ | ~~LOW~~ | ~~5 min~~ | ~~Never called — dead code~~ | ✅ Done |
 | ~~10~~ | ~~Remove unused client aggregate methods (`getTotalOutput`, `getTotalEnergyToday`, `getTotalEnergyLifetime`)~~ | ~~LOW~~ | ~~10 min~~ | ~~Already computed in `setOutputDataStates` — duplication~~ | ✅ Done |
 | 11 | Add `ConsecutiveErrors` number state for ioBroker alerting rules | LOW | 2 hrs | Enables automated alerts on sustained outage | **Low** |
+| 12 | Fix `async/await` inside `forEach` in all `set*States` methods (`main.ts:105,123,161,190`) | CRITICAL | 30 min | States written before creation on first poll — data integrity | **Highest** |
+| 13 | Add `.catch()` + `setConnected(false)` to `setOutputDataStates`, `setAlarmInfoStates`, `setOnOffStatusState` | HIGH | 15 min | Silent failures leave `connected=true` when inverter unreachable | **Highest** |
+| 14 | Replace `setInterval` with `setTimeout` recursion — await all 5 HTTP calls sequentially | HIGH | 1 hr | Prevents 5 concurrent TCP connections to microcontroller + request pileup | **High** |
+| 15 | Downgrade `log.info(\`url: \${url}\`)` → `log.debug` in `ApSystemsEz1Client.getRequest` (`ApSystemsEz1Client.ts:31`) | MEDIUM | 2 min | 5 info-level URL logs per poll interval | **Highest** |
+| 16 | Replace `createState("DeviceInfo", "", name)` with `extendObjectAsync` using full dotted path | MEDIUM | 30 min | Empty parent arg creates `DeviceInfo..StateName` double-dot paths | **High** |
+| 17 | Fix `pollIntervalInMilliSeconds` default from `60` to `60000` (`main.ts:15`) | LOW | 2 min | Latent bug — 60ms poll if `onReady` ever short-circuits before line 49 | **High** |
 
 ---
 
@@ -45,4 +51,12 @@ fix: correct getStateAsync path to prevent redundant createState calls  (#3)
 feat: add connected boolean state for operator visibility               (#4)
 fix: correct typo in invalid config error message                       (#5)
 chore: downgrade payload logging to debug level                         (#6)
+
+fix: replace async forEach with Promise.all in all set*States methods   (#12)
+fix: add catch handlers and setConnected(false) to output/alarm/onoff   (#13)
+chore: downgrade url logging from info to debug in getRequest           (#15)
+fix: correct pollIntervalInMilliSeconds default to 60000                (#17)
+fix: replace createState empty parent with extendObjectAsync            (#16)
+refactor: replace setInterval with sequential setTimeout poll loop      (#14)
+feat: add ConsecutiveErrors state for alerting                          (#11)
 ```

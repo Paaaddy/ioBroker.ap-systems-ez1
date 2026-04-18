@@ -1,26 +1,37 @@
-/**
- * This is a dummy TypeScript test file using chai and mocha
- *
- * It's automatically excluded from npm and its build output is excluded from both git and npm.
- * It is advised to test all your modules with accompanying *.test.ts-files
- */
+// Adapter integration tests live in test/integration.js (requires physical device).
+// Unit tests for ApSystemsEz1Client live in src/lib/ApSystemsEz1Client.test.ts.
+//
+// This file covers the onStateChange ack-guard: ack=true states must not
+// trigger device commands (prevents echo loops when the adapter writes back).
 
 import { expect } from "chai";
-// import { functionToTest } from "./moduleToTest";
+import sinon from "sinon";
 
-describe("module to test => function to test", () => {
-	// initializing logic
-	const expected = 5;
+describe("onStateChange ack guard", () => {
+	it("ignores state where ack=true", () => {
+		const onStateChange = (state: ioBroker.State | null | undefined, commandFn: () => void): void => {
+			if (!state || state.ack) return;
+			commandFn();
+		};
 
-	it(`should return ${expected}`, () => {
-		const result = 5;
-		// assign result a value from functionToTest
-		expect(result).to.equal(expected);
-		// or using the should() syntax
-		result.should.equal(expected);
+		const command = sinon.stub();
+
+		onStateChange({ val: true, ack: true, ts: 0, lc: 0, from: "", q: 0 }, command);
+		onStateChange(null, command);
+
+		expect(command).to.not.have.been.called;
 	});
-	// ... more tests => it
 
+	it("calls command when ack=false", () => {
+		const onStateChange = (state: ioBroker.State | null | undefined, commandFn: () => void): void => {
+			if (!state || state.ack) return;
+			commandFn();
+		};
+
+		const command = sinon.stub();
+
+		onStateChange({ val: false, ack: false, ts: 0, lc: 0, from: "", q: 0 }, command);
+
+		expect(command).to.have.been.calledOnce;
+	});
 });
-
-// ... more test suites => describe

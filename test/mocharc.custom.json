@@ -4,7 +4,12 @@
 		"ts-node/register",
 		"source-map-support/register"
 	],
+	"spec": [
+		"src/**/*.test.ts",
+		"src/*.test.ts"
+	],
 	"watch-files": [
-		"src/**/*.test.ts"
+		"src/**/*.test.ts",
+		"src/*.test.ts"
 	]
 }
