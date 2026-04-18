@@ -3,6 +3,9 @@ name: Auto-Merge
 on:
   pull_request_target:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   auto-merge-dependabot:
     if: github.actor == 'dependabot[bot]'
