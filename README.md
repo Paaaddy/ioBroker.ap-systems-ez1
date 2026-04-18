@@ -137,9 +137,15 @@ Required secret: `AUTO_MERGE_TOKEN` — GitHub PAT with `public_repo` scope.
 
 ---
 
+## AI Disclosure
+
+Parts of the code and CI pipeline in this fork were written or optimized with the assistance of [Claude Code](https://claude.ai/code) (Anthropic). All generated output has been reviewed and tested by the maintainer.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
 Copyright (c) 2024 Tobias Exner (original author)
-Copyright (c) 2026 Paaaddy (fork maintainer)
+Copyright (c) 2026 Leotronick / Paaaddy (fork maintainer)
