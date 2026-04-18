@@ -30,10 +30,10 @@ export class ApSystemsEz1Client {
 			const url: string = `${this.baseUrl}/${endpoint}`;
 			this.log.info(`url: ${url}`)
 
-			const response: AxiosResponse = await axios.get(url);
+			const response: AxiosResponse = await axios.get(url, { timeout: 5000 });
 
 			// Handle the response data
-			this.log.info(`Response: ${JSON.stringify(response.data)}`);
+			this.log.debug(`Response: ${JSON.stringify(response.data)}`);
 			if (response.status !== 200) {
 				this.handleClientError(response.statusText);
 			} else {
@@ -150,6 +150,24 @@ export class ApSystemsEz1Client {
 	public async getMaxPower(): Promise<TypedReturnDto<ReturnMaxPower> | undefined> {
 		const result: TypedReturnDto<ReturnMaxPower> | undefined = await this.getRequest<TypedReturnDto<ReturnMaxPower>>("getMaxPower");
 		return result;
+	}
+
+	/**
+	 * Sets the maximum power output of the device.
+	 * @param watts - Target max power in watts (must be within device min/max range)
+	 */
+	public async setMaxPower(watts: number): Promise<TypedReturnDto<ReturnMaxPower> | undefined> {
+		return this.getRequest<TypedReturnDto<ReturnMaxPower>>(`setMaxPower?p=${watts}`);
+	}
+
+	/**
+	 * Sets the On/Off status of the device.
+	 * When set to off, the device stops outputting power but the Local API remains active.
+	 * @param on - true to turn on, false to turn off
+	 */
+	public async setOnOffStatus(on: boolean): Promise<TypedReturnDto<ReturnOnOffStatus> | undefined> {
+		const status = on ? "0" : "1";
+		return this.getRequest<TypedReturnDto<ReturnOnOffStatus>>(`setOnOff?status=${status}`);
 	}
 
 	private async handleClientError(error: unknown): Promise<void> {

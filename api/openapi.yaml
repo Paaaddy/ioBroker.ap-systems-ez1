@@ -1,0 +1,348 @@
+openapi: 3.0.3
+info:
+  title: APsystems EZ1 Local API
+  version: "1.1"
+  description: |
+    Local HTTP API exposed by the APsystems EZ1 microinverter when Local Mode is enabled
+    via the AP EasyPower app. All devices on the same LAN can read and control the inverter.
+
+    **Base URL:** `http://<device-ip>:8050`
+
+    **Note:** All write operations use GET with query parameters (device firmware constraint).
+
+servers:
+  - url: "http://{ip}:8050"
+    variables:
+      ip:
+        default: "192.168.1.100"
+        description: IP address of the EZ1 inverter on the local network
+
+tags:
+  - name: device
+    description: Device identity and configuration
+  - name: output
+    description: Real-time power and energy readings
+  - name: control
+    description: Write operations — on/off and power cap
+
+paths:
+  /getDeviceInfo:
+    get:
+      tags: [device]
+      summary: Get device information
+      description: Returns identity, firmware version, network info, and power limits.
+      operationId: getDeviceInfo
+      responses:
+        "200":
+          description: Device information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceInfoResponse"
+              example:
+                data:
+                  deviceId: "E07000000001"
+                  devVer: "EZ1 1.0.0"
+                  ssid: "MyNetwork"
+                  ipAddr: "192.168.1.100"
+                  minPower: "30"
+                  maxPower: "800"
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+  /getOutputData:
+    get:
+      tags: [output]
+      summary: Get current output data
+      description: |
+        Returns real-time power output and energy counters for both DC input channels.
+        - `p1` / `p2`: current power per channel (W)
+        - `e1` / `e2`: energy generated since last startup per channel (kWh)
+        - `te1` / `te2`: lifetime energy per channel (kWh)
+      operationId: getOutputData
+      responses:
+        "200":
+          description: Current output data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutputDataResponse"
+              example:
+                data:
+                  p1: 245.5
+                  e1: 1.23
+                  te1: 153.26
+                  p2: 198.0
+                  e2: 0.98
+                  te2: 141.10
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+  /getMaxPower:
+    get:
+      tags: [device]
+      summary: Get max power limit
+      description: Returns the current user-configured maximum output power cap.
+      operationId: getMaxPower
+      responses:
+        "200":
+          description: Current max power setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaxPowerResponse"
+              example:
+                data:
+                  maxPower: "600"
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+  /setMaxPower:
+    get:
+      tags: [control]
+      summary: Set max power limit
+      description: |
+        Sets the maximum AC output power cap. Value must be within the device's
+        supported range (see `minPower` and `maxPower` from `getDeviceInfo`).
+      operationId: setMaxPower
+      parameters:
+        - name: p
+          in: query
+          required: true
+          description: Target max power in watts
+          schema:
+            type: integer
+            example: 600
+      responses:
+        "200":
+          description: Updated max power setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaxPowerResponse"
+              example:
+                data:
+                  maxPower: "600"
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+  /getAlarm:
+    get:
+      tags: [device]
+      summary: Get alarm status
+      description: |
+        Returns fault flags for each monitored condition.
+        `"0"` = normal, `"1"` = alarm.
+
+        **Alarm handling suggestions:**
+        - `og` (off-grid): check AC connection
+        - `oe` (output fault): check AC connection
+        - `isce1` / `isce2` (DC short circuit): check DC channel wiring
+      operationId: getAlarmInfo
+      responses:
+        "200":
+          description: Alarm status flags
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlarmInfoResponse"
+              example:
+                data:
+                  og: "0"
+                  isce1: "0"
+                  isce2: "0"
+                  oe: "0"
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+  /getOnOff:
+    get:
+      tags: [control]
+      summary: Get device on/off status
+      description: |
+        Returns current power output state.
+        `"0"` = on (outputting power), `"1"` = off (power halted, API still active).
+      operationId: getOnOffStatus
+      responses:
+        "200":
+          description: On/off status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnOffStatusResponse"
+              example:
+                data:
+                  status: "0"
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+  /setOnOff:
+    get:
+      tags: [control]
+      summary: Set device on/off status
+      description: |
+        Turns power output on or off. When set to off, the device stops producing power
+        but the Local API HTTP server remains reachable.
+      operationId: setOnOffStatus
+      parameters:
+        - name: status
+          in: query
+          required: true
+          description: "`0` = turn on, `1` = turn off"
+          schema:
+            type: string
+            enum: ["0", "1"]
+            example: "0"
+      responses:
+        "200":
+          description: Updated on/off status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnOffStatusResponse"
+              example:
+                data:
+                  status: "0"
+                message: "SUCCESS"
+                deviceId: "E07000000001"
+
+components:
+  schemas:
+    ResponseEnvelope:
+      type: object
+      required: [message, deviceId]
+      properties:
+        message:
+          type: string
+          enum: [SUCCESS, FAILED]
+        deviceId:
+          type: string
+          description: Inverter device ID
+
+    DeviceInfo:
+      type: object
+      required: [deviceId, devVer, ssid, ipAddr, minPower, maxPower]
+      properties:
+        deviceId:
+          type: string
+        devVer:
+          type: string
+          description: Firmware version
+        ssid:
+          type: string
+          description: WiFi SSID the device is connected to
+        ipAddr:
+          type: string
+          format: ipv4
+        minPower:
+          type: string
+          description: Minimum configurable power cap (W)
+        maxPower:
+          type: string
+          description: Maximum configurable power cap (W)
+
+    OutputData:
+      type: object
+      required: [p1, e1, te1, p2, e2, te2]
+      properties:
+        p1:
+          type: number
+          description: Current power — channel 1 (W)
+        e1:
+          type: number
+          description: Energy since startup — channel 1 (kWh)
+        te1:
+          type: number
+          description: Lifetime energy — channel 1 (kWh)
+        p2:
+          type: number
+          description: Current power — channel 2 (W)
+        e2:
+          type: number
+          description: Energy since startup — channel 2 (kWh)
+        te2:
+          type: number
+          description: Lifetime energy — channel 2 (kWh)
+
+    MaxPower:
+      type: object
+      required: [maxPower]
+      properties:
+        maxPower:
+          type: string
+          description: Current max power cap (W)
+
+    AlarmInfo:
+      type: object
+      required: [og, isce1, isce2, oe]
+      properties:
+        og:
+          type: string
+          enum: ["0", "1"]
+          description: "Off-grid fault: 0=normal, 1=alarm"
+        isce1:
+          type: string
+          enum: ["0", "1"]
+          description: "DC channel 1 short circuit: 0=normal, 1=alarm"
+        isce2:
+          type: string
+          enum: ["0", "1"]
+          description: "DC channel 2 short circuit: 0=normal, 1=alarm"
+        oe:
+          type: string
+          enum: ["0", "1"]
+          description: "Output fault: 0=normal, 1=alarm"
+
+    OnOffStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: ["0", "1"]
+          description: "0=on (producing power), 1=off (halted)"
+
+    DeviceInfoResponse:
+      allOf:
+        - $ref: "#/components/schemas/ResponseEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/DeviceInfo"
+
+    OutputDataResponse:
+      allOf:
+        - $ref: "#/components/schemas/ResponseEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/OutputData"
+
+    MaxPowerResponse:
+      allOf:
+        - $ref: "#/components/schemas/ResponseEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/MaxPower"
+
+    AlarmInfoResponse:
+      allOf:
+        - $ref: "#/components/schemas/ResponseEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/AlarmInfo"
+
+    OnOffStatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/ResponseEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/OnOffStatus"
