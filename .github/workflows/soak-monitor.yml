@@ -1,0 +1,54 @@
+name: Soak Monitor
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch npm download stats
+        id: npm
+        run: |
+          LATEST=$(npm view iobroker.ap-systems-ez1 dist-tags.latest)
+          BETA=$(npm view iobroker.ap-systems-ez1 dist-tags.beta 2>/dev/null || echo "none")
+          DOWNLOADS=$(curl -s "https://api.npmjs.org/downloads/point/last-week/iobroker.ap-systems-ez1" \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).downloads))")
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          echo "beta=$BETA" >> $GITHUB_OUTPUT
+          echo "downloads=$DOWNLOADS" >> $GITHUB_OUTPUT
+          echo "### npm stats" >> $GITHUB_STEP_SUMMARY
+          echo "- latest: \`$LATEST\`" >> $GITHUB_STEP_SUMMARY
+          echo "- beta: \`$BETA\`" >> $GITHUB_STEP_SUMMARY
+          echo "- weekly downloads: $DOWNLOADS" >> $GITHUB_STEP_SUMMARY
+
+      - name: Count open bug issues
+        id: issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=$(gh issue list --label bug --state open --json number --jq 'length' \
+            --repo Paaaddy/ioBroker.ap-systems-ez1)
+          CRITICAL=$(gh issue list --label bug --label critical --state open --json number \
+            --jq 'length' --repo Paaaddy/ioBroker.ap-systems-ez1 2>/dev/null || echo 0)
+          echo "bug_count=$COUNT" >> $GITHUB_OUTPUT
+          echo "critical_count=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "### GitHub issues" >> $GITHUB_STEP_SUMMARY
+          echo "- open bug issues: $COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- critical: $CRITICAL" >> $GITHUB_STEP_SUMMARY
+
+      - name: Evaluate phase gate thresholds
+        run: |
+          BUGS=${{ steps.issues.outputs.bug_count }}
+          CRITICAL=${{ steps.issues.outputs.critical_count }}
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::RED — $CRITICAL critical bug(s) open. Rollback required."
+            exit 1
+          fi
+          if [ "$BUGS" -ge 3 ]; then
+            echo "::warning::YELLOW — $BUGS open bug issues. Hold promotion, investigate."
+          else
+            echo "::notice::GREEN — $BUGS open bug issues. Metrics nominal."
+          fi
