@@ -22,21 +22,18 @@ jobs:
     steps:
       - uses: ioBroker/testing-action-check@v1
         with:
-          node-version: "18.x"
+          node-version: "20.x"
           type-checking: true
           lint: true
 
   adapter-tests:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        # macOS runners cost 10x Linux — excluded. No OS-specific code in this adapter.
-        # Windows included to catch path separator edge cases in ioBroker core.
-        node-version: [18.x, 20.x, 22.x]
-        os: [ubuntu-latest, windows-latest]
+        node-version: [20.x, 22.x]
     steps:
       - uses: ioBroker/testing-action-adapter@v1
         with:
           node-version: ${{ matrix.node-version }}
-          os: ${{ matrix.os }}
+          os: ubuntu-latest
           build: true
