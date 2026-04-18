@@ -3,17 +3,16 @@
   "version": "0.1.0",
   "description": "This adapter is used to interact with APsystems EZ1 Microinverters. It provides a convinient way to communicate with the microinverter over your local network.",
   "author": {
-    "name": "Tobias Exner",
-    "email": "tobias.exner@soptim.de"
+    "name": "Paaaddy"
   },
-  "homepage": "https://github.com/tobiasexner/ioBroker.ap-systems-ez1",
+  "homepage": "https://github.com/Paaaddy/ioBroker.ap-systems-ez1",
   "license": "MIT",
   "keywords": [
     "APsystems EZ1 Microinverter"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tobiasexner/ioBroker.ap-systems-ez1.git"
+    "url": "https://github.com/Paaaddy/ioBroker.ap-systems-ez1.git"
   },
   "engines": {
     "node": ">= 16"
@@ -77,7 +76,7 @@
     "release": "release-script"
   },
   "bugs": {
-    "url": "https://github.com/tobiasexner/ioBroker.ap-systems-ez1/issues"
+    "url": "https://github.com/Paaaddy/ioBroker.ap-systems-ez1/issues"
   },
   "readmeFilename": "README.md"
 }

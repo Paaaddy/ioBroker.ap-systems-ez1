@@ -58,7 +58,7 @@
 			"zh-cn": "该适配器用于与 APsystems EZ1 微型逆变器交互。它提供了一种通过本地网络与微型逆变器进行通信的便捷方式。"
 		},
 		"authors": [
-			"Tobias Exner <tobias.exner@soptim.de>"
+			"Paaaddy"
 		],
 		"keywords": [
 			"APsystems EZ1 Microinverter"
@@ -68,8 +68,8 @@
 		"main": "build/main.js",
 		"icon": "ap-systems-ez1.png",
 		"enabled": true,
-		"extIcon": "https://raw.githubusercontent.com/tobias.exner@soptim.de/ioBroker.ap-systems-ez1/main/admin/ap-systems-ez1.png",
-		"readme": "https://github.com/tobias.exner@soptim.de/ioBroker.ap-systems-ez1/blob/main/README.md",
+		"extIcon": "https://raw.githubusercontent.com/Paaaddy/ioBroker.ap-systems-ez1/main/admin/ap-systems-ez1.png",
+		"readme": "https://github.com/Paaaddy/ioBroker.ap-systems-ez1/blob/main/README.md",
 		"loglevel": "info",
 		"mode": "daemon",
 		"type": "iot-systems",
