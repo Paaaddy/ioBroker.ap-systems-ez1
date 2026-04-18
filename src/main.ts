@@ -15,6 +15,8 @@ class ApSystemsEz1 extends utils.Adapter {
 	private pollIntervalInMilliSeconds: number = 60;
 	private apiClient!: ApSystemsEz1Client;
 	private timer: NodeJS.Timeout | undefined;
+	private slowTimer: NodeJS.Timeout | undefined;
+	private static readonly SLOW_POLL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -62,12 +64,17 @@ class ApSystemsEz1 extends utils.Adapter {
 		});
 		await this.setStateAsync("connected", { val: false, ack: true });
 
-		this.timer = setInterval(() => {
+		this.setDeviceInfoStates();
+		this.setMaxPowerState();
+		this.slowTimer = setInterval(() => {
 			this.setDeviceInfoStates();
+			this.setMaxPowerState();
+		}, ApSystemsEz1.SLOW_POLL_INTERVAL_MS);
+
+		this.timer = setInterval(() => {
 			this.setOutputDataStates();
 			this.setAlarmInfoStates();
 			this.setOnOffStatusState();
-			this.setMaxPowerState();
 		}, this.pollIntervalInMilliSeconds);
 
 		this.subscribeStates("OnOffStatus.OnOffStatus");
@@ -257,6 +264,7 @@ class ApSystemsEz1 extends utils.Adapter {
 	private onUnload(callback: () => void): void {
 		try {
 			clearInterval(this.timer);
+			clearInterval(this.slowTimer);
 			callback();
 		} catch (e) {
 			callback();
@@ -310,13 +318,6 @@ class ApSystemsEz1 extends utils.Adapter {
 	// 	}
 	// }
 
-	private async handleClientError(error: unknown): Promise<void> {
-		if (error instanceof Error) {
-			this.log.error(`Unknown error: ${error}. Stack: ${error.stack}`)
-		} else {
-			this.log.error(`Unknown error: ${error}`)
-		}
-	}
 }
 
 if (require.main !== module) {
