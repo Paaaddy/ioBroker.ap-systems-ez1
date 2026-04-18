@@ -291,14 +291,40 @@ class ApSystemsEz1 extends utils.Adapter {
 			return;
 		}
 		if (id.endsWith(".OnOffStatus.OnOffStatus")) {
-			this.apiClient.setOnOffStatus(state.val as boolean)
+			if (typeof state.val !== "boolean") {
+				this.log.error(`OnOffStatus: expected boolean, got ${typeof state.val}`);
+				return;
+			}
+			this.apiClient.setOnOffStatus(state.val)
 				.then(() => this.log.info(`OnOff set to ${state.val}`))
 				.catch((e) => this.log.error(`Failed to set OnOff: ${e}`));
 		} else if (id.endsWith(".MaxPower.MaxPower")) {
-			this.apiClient.setMaxPower(state.val as number)
-				.then(() => this.log.info(`MaxPower set to ${state.val}W`))
-				.catch((e) => this.log.error(`Failed to set MaxPower: ${e}`));
+			if (typeof state.val !== "number") {
+				this.log.error(`MaxPower: expected number, got ${typeof state.val}`);
+				return;
+			}
+			this.validateAndSetMaxPower(state.val);
 		}
+	}
+
+	private async validateAndSetMaxPower(watts: number): Promise<void> {
+		const minState = await this.getStateAsync("DeviceInfo.MinPower");
+		const maxState = await this.getStateAsync("DeviceInfo.MaxPower");
+		const min = typeof minState?.val === "number" ? minState.val : null;
+		const max = typeof maxState?.val === "number" ? maxState.val : null;
+
+		if (min !== null && watts < min) {
+			this.log.error(`MaxPower ${watts}W rejected: below device minimum ${min}W`);
+			return;
+		}
+		if (max !== null && watts > max) {
+			this.log.error(`MaxPower ${watts}W rejected: above device maximum ${max}W`);
+			return;
+		}
+
+		this.apiClient.setMaxPower(watts)
+			.then(() => this.log.info(`MaxPower set to ${watts}W`))
+			.catch((e) => this.log.error(`Failed to set MaxPower: ${e}`));
 	}
 
 	// If you need to accept messages in your adapter, uncomment the following block and the corresponding line in the constructor.
