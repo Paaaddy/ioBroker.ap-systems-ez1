@@ -27,8 +27,8 @@ This is an ioBroker adapter that polls an APsystems EZ1 microinverter over the l
 
 ### Two-layer structure
 
-1. **`src/lib/ApSystemsEz1Client.ts`** — thin HTTP client wrapping `axios.get` against `http://<ip>:<port>/<endpoint>`. Endpoints used: `getDeviceInfo`, `getAlarm`, `getOnOff`, `getOutputData`, `getMaxPower`. All responses share the envelope `TypedReturnDto<T> = { data: T, message, deviceId }` (`src/lib/TypedReturnDto.ts`); per-endpoint payload shapes live in `src/lib/Return*.ts`. The client takes `ioBroker.Logger` in its constructor and owns its own error logging, gated by the `ignoreConnectionErrorMessages` flag so that an offline inverter does not spam the log.
-2. **`src/main.ts`** — the `utils.Adapter` subclass. On `ready`, it validates `this.config`, constructs the client, and starts a `setInterval` that calls five `set*States` methods each tick. Each of those methods calls the client, then lazily `createState`s (grouped by channel: `DeviceInfo`, `OutputData`, `AlarmInfo`, `OnOffStatus`, `MaxPower`) and writes the value with `setStateAsync` under `<Channel>.<Name>`.
+1. **`src/lib/ApSystemsEz1Client.ts`** — HTTP client wrapping `axios.create()` with connection pooling (http.Agent: `keepAlive: true`, `maxSockets: 1`), exponential backoff retry (max 3 attempts: 100ms → 200ms → 400ms), and guarded debug logging (only when `log.level === "debug"`). Uses `URLSearchParams` for query encoding on write methods. Endpoints: `getDeviceInfo`, `getAlarm`, `getOnOff`, `getOutputData`, `getMaxPower` (reads); `setMaxPower(watts)` and `setOnOffStatus(boolean)` (writes). All responses share the envelope `TypedReturnDto<T> = { data: T, message, deviceId }` (`src/lib/TypedReturnDto.ts`); per-endpoint payload shapes live in `src/lib/Return*.ts`. Takes `ioBroker.Logger` in constructor and owns error logging, gated by `ignoreConnectionErrorMessages` flag.
+2. **`src/main.ts`** — the `utils.Adapter` subclass. On `ready`, it validates `this.config`, constructs the client, and starts two intervals. **Initial polls fire-and-forget** (using `void` prefix) so the adapter ready event fires immediately without awaiting device responses. Each `set*States` method calls the client, uses `stateExists()` check to avoid redundant `getStateAsync` calls, lazily `createState`s (grouped by channel: `DeviceInfo`, `OutputData`, `AlarmInfo`, `OnOffStatus`, `MaxPower`), and parallelizes state writes via `Promise.all()`. Writable states (`OnOffStatus.OnOffStatus`, `MaxPower.MaxPower`) trigger live device commands on `onStateChange` when `ack=false`.
 
 ### Config typing
 
@@ -48,7 +48,6 @@ Both handles are stored on `this` and cleared in `onUnload`.
 
 ### Known rough edges to be aware of when editing `main.ts`
 
-- `setDeviceInfoStates` / `setOutputDataStates` / etc. call `this.getStateAsync(element.name)` with the bare name (e.g. `"MaxPower"`) instead of the full path (e.g. `"DeviceInfo.MaxPower"`). This means the existence check effectively always returns falsy and `createState` is invoked on every poll. Preserve or fix this deliberately — do not "clean up" silently.
 - The adapter-level `handleClientError` on `ApSystemsEz1` is dead code; errors are handled inside the client.
 
 ### State channel structure
@@ -89,7 +88,9 @@ Device endpoints (base `http://<ip>:8050`):
 
 ### Test coverage
 
-`src/main.test.ts` is a placeholder stub — it asserts `5 === 5`. Real unit coverage of `ApSystemsEz1Client` and `main.ts` does not exist yet. `test:package` (package manifest validation) does pass.
+- **`src/lib/ApSystemsEz1Client.test.ts`** — 20 unit tests with 100% line coverage on the client. Tests cover: URL construction, all endpoints (`getDeviceInfo`, `getOutputData`, `getOnOffStatus`, `getMaxPower`, `getAlarmInfo`), write methods (`setOnOffStatus`, `setMaxPower`) with URL encoding validation, exponential backoff retry logic (4 attempts on failure), debug logging when `log.level === "debug"`, error handling with `ignoreConnectionErrorMessages` flag, and non-200 status codes. Uses `sinon.stub(axios, "create")` mock strategy to inject a stubbed axios instance.
+- **`src/main.test.ts`** — placeholder stub (asserts `5 === 5`); real integration tests of `main.ts` do not exist yet.
+- **`test:package`** — package manifest validation via `@iobroker/testing` does pass.
 
 ### Admin UI
 

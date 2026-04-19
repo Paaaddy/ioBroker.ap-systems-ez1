@@ -123,7 +123,10 @@ Required secret: `AUTO_MERGE_TOKEN` — GitHub PAT with `public_repo` scope.
 
 - Add write API: `setOnOff` and `setMaxPower` via `onStateChange` handler
 - Add `connected` boolean state (reflects last poll result)
-- Add 17 unit tests covering all endpoints, write API encoding, and ack guard
+- Add 20 unit tests with 100% coverage on ApSystemsEz1Client, covering all endpoints, write API encoding, retry logic, and ack guard
+- Add HTTP keep-alive connection pooling and exponential backoff retry (3 attempts: 100/200/400ms) to client
+- Optimize adapter startup: initial polls now fire-and-forget so ready event fires immediately
+- Parallelize state creation and writes via Promise.all()
 - Add CI pipeline: lint, test, release-please, dependabot, soak monitor, rollback, promote-stable workflows
 - Reduce CI matrix to ubuntu + Node 20/22 (dropped macOS, Windows, Node 18 EOL)
 
