@@ -103,14 +103,20 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.markStateCreated("connected");
 		await this.setStateAsync("connected", { val: false, ack: true });
 
-		// Await initial polls so device limits are loaded before accepting writes
-		await Promise.all([
-			this.setDeviceInfoStates(),
-			this.setMaxPowerState(),
-			this.setOutputDataStates(),
-			this.setAlarmInfoStates(),
-			this.setOnOffStatusState(),
-		]);
+		// Await initial polls so device limits are loaded before accepting writes.
+		// Wrapped defensively: poll methods catch internally, but setConnected() could throw
+		// if DB is unavailable — timers and subscriptions must still be set up regardless.
+		try {
+			await Promise.all([
+				this.setDeviceInfoStates(),
+				this.setMaxPowerState(),
+				this.setOutputDataStates(),
+				this.setAlarmInfoStates(),
+				this.setOnOffStatusState(),
+			]);
+		} catch (e) {
+			this.log.error(`Initial poll failed unexpectedly: ${e}`);
+		}
 
 		this.slowTimer = setInterval(() => {
 			void this.setDeviceInfoStates();
@@ -132,7 +138,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			const deviceInfo = await this.apiClient.getDeviceInfo();
 			this.log.debug("deviceInfo received");
 
-			if (deviceInfo !== undefined) {
+			if (deviceInfo?.data != null) {
 				await this.setConnected(true);
 				const res = deviceInfo.data;
 
@@ -178,7 +184,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			const outputData = await this.apiClient.getOutputData();
 			this.log.debug("outputData received");
 
-			if (outputData !== undefined) {
+			if (outputData?.data != null) {
 				const res = outputData.data;
 
 				const promises = ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
@@ -212,7 +218,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			const alarmInfo = await this.apiClient.getAlarmInfo();
 			this.log.debug("alarmInfo received");
 
-			if (alarmInfo !== undefined) {
+			if (alarmInfo?.data != null) {
 				const res = alarmInfo.data;
 
 				const promises = ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
@@ -247,7 +253,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			const onOffStatus = await this.apiClient.getOnOffStatus();
 			this.log.debug("onOffStatus received");
 
-			if (onOffStatus !== undefined) {
+			if (onOffStatus?.data != null) {
 				const res = onOffStatus.data;
 				const stateId = "OnOffStatus.OnOffStatus";
 				if (!this.stateExists(stateId)) {
@@ -276,7 +282,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			const maxPower = await this.apiClient.getMaxPower();
 			this.log.debug("maxPower received");
 
-			if (maxPower !== undefined) {
+			if (maxPower?.data != null) {
 				const res = maxPower.data;
 				const powerValue = Number(res.maxPower);
 				if (!Number.isFinite(powerValue)) {
@@ -358,8 +364,9 @@ class ApSystemsEz1 extends utils.Adapter {
 	private async applyOnOffStatus(on: boolean): Promise<void> {
 		await this.apiClient.setOnOffStatus(on);
 
-		// Verify device applied the command; revert local state to device reality on mismatch
-		await new Promise(r => setTimeout(r, 500));
+		// Verify device applied the command; revert local state to device reality on mismatch.
+		// 2000ms allows slow devices time to apply before we poll for confirmation.
+		await new Promise(r => setTimeout(r, 2000));
 		const confirmed = await this.apiClient.getOnOffStatus();
 		if (!confirmed) {
 			this.log.error(`OnOff command sent but could not verify device state`);
@@ -402,8 +409,9 @@ class ApSystemsEz1 extends utils.Adapter {
 
 		await this.apiClient.setMaxPower(watts);
 
-		// Verify device applied the command; revert local state to device reality on mismatch
-		await new Promise(r => setTimeout(r, 500));
+		// Verify device applied the command; revert local state to device reality on mismatch.
+		// 2000ms allows slow devices time to apply before we poll for confirmation.
+		await new Promise(r => setTimeout(r, 2000));
 		const confirmed = await this.apiClient.getMaxPower();
 		if (!confirmed) {
 			this.log.error(`MaxPower command sent but could not verify device state`);
