@@ -121,12 +121,18 @@ Required secret: `AUTO_MERGE_TOKEN` — GitHub PAT with `public_repo` scope.
 
 ### 0.1.0 (2026-04-18)
 
-- Add write API: `setOnOff` and `setMaxPower` via `onStateChange` handler
-- Add `connected` boolean state (reflects last poll result)
-- Add 20 unit tests with 100% coverage on ApSystemsEz1Client, covering all endpoints, write API encoding, retry logic, and ack guard
-- Add HTTP keep-alive connection pooling and exponential backoff retry (3 attempts: 100/200/400ms) to client
-- Optimize adapter startup: initial polls now fire-and-forget so ready event fires immediately
-- Parallelize state creation and writes via Promise.all()
+- Add write API: `OnOffStatus.OnOffStatus` (boolean) and `MaxPower.MaxPower` (number) writable states
+- Add `connected` boolean state (updated on every poll success/failure across all five poll methods)
+- Hardware safety: write commands use fail-fast path (no retries) — prevents duplicate commands if response times out
+- Hardware safety: write queue serializes all writes via Promise chain — rapid toggles cannot race
+- Hardware safety: post-write verification polls device 2s after write; reverts local state to device reality on mismatch
+- Hardware safety: `net.isIPv4()` IP validation (validates each octet 0–255)
+- Hardware safety: `Number.isFinite()` guards on DeviceInfo limits, OutputData fields, and MaxPower before writing state
+- Hardware safety: null-guard on response envelope `data` field before destructuring
+- Hardware safety: initial polls awaited before `subscribeStates` so device limits are loaded before first write accepted
+- Add HTTP keep-alive connection pooling (`http.Agent`) and exponential backoff retry on read endpoints (3 attempts: 100/200/400ms)
+- Parallelize state writes via `Promise.all()`
+- Add 23 unit tests, 100% branch + statement coverage on `ApSystemsEz1Client`
 - Add CI pipeline: lint, test, release-please, dependabot, soak monitor, rollback, promote-stable workflows
 - Reduce CI matrix to ubuntu + Node 20/22 (dropped macOS, Windows, Node 18 EOL)
 

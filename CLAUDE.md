@@ -27,8 +27,19 @@ This is an ioBroker adapter that polls an APsystems EZ1 microinverter over the l
 
 ### Two-layer structure
 
-1. **`src/lib/ApSystemsEz1Client.ts`** — HTTP client wrapping `axios.create()` with connection pooling (http.Agent: `keepAlive: true`, `maxSockets: 1`), exponential backoff retry (max 3 attempts: 100ms → 200ms → 400ms), and guarded debug logging (only when `log.level === "debug"`). Uses `URLSearchParams` for query encoding on write methods. Endpoints: `getDeviceInfo`, `getAlarm`, `getOnOff`, `getOutputData`, `getMaxPower` (reads); `setMaxPower(watts)` and `setOnOffStatus(boolean)` (writes). All responses share the envelope `TypedReturnDto<T> = { data: T, message, deviceId }` (`src/lib/TypedReturnDto.ts`); per-endpoint payload shapes live in `src/lib/Return*.ts`. Takes `ioBroker.Logger` in constructor and owns error logging, gated by `ignoreConnectionErrorMessages` flag.
-2. **`src/main.ts`** — the `utils.Adapter` subclass. On `ready`, it validates `this.config`, constructs the client, and starts two intervals. **Initial polls fire-and-forget** (using `void` prefix) so the adapter ready event fires immediately without awaiting device responses. Each `set*States` method calls the client, uses `stateExists()` check to avoid redundant `getStateAsync` calls, lazily `createState`s (grouped by channel: `DeviceInfo`, `OutputData`, `AlarmInfo`, `OnOffStatus`, `MaxPower`), and parallelizes state writes via `Promise.all()`. Writable states (`OnOffStatus.OnOffStatus`, `MaxPower.MaxPower`) trigger live device commands on `onStateChange` when `ack=false`.
+1. **`src/lib/ApSystemsEz1Client.ts`** — HTTP client wrapping `axios.create()` with connection pooling (`http.Agent`: `keepAlive: true`, `maxSockets: 1`). Two request paths:
+   - `getRequest()` — read endpoints, retries up to `MAX_RETRIES=3` with 100ms → 200ms → 400ms backoff.
+   - `setRequest()` — write endpoints, **fail-fast (0 retries)**. Hardware safety: device may apply command before timeout; retrying could send duplicates (e.g., double-toggle).
+   Debug logging gated: `if (this.log.level === "debug")`. Uses `URLSearchParams` for query encoding; `Math.round(watts)` in `setMaxPower` to avoid float/scientific-notation in URL. All responses share the envelope `TypedReturnDto<T> = { data: T, message, deviceId }` (`src/lib/TypedReturnDto.ts`). Takes `ioBroker.Logger` in constructor; error logging gated by `ignoreConnectionErrorMessages` flag.
+
+2. **`src/main.ts`** — the `utils.Adapter` subclass. On `ready`:
+   - Validates `this.config` with `net.isIPv4()` for strict IP validation.
+   - Constructs the client.
+   - **Awaits** `Promise.all([setDeviceInfoStates(), setMaxPowerState()])` before calling `subscribeStates()` — device limits (`minPower`/`maxPower`) must be loaded before the first write is accepted.
+   - Starts two polling intervals (see Timer architecture).
+   - Writable states (`OnOffStatus.OnOffStatus`, `MaxPower.MaxPower`) trigger live commands via a **write queue** (`this.writeQueue: Promise<void>`) that serializes all writes — rapid toggles cannot race each other.
+   - Post-write verification: after each write, waits 2000ms then polls device; if device state doesn't match, reverts local ioBroker state to device reality and sets `connected=false`.
+   - All poll methods null-guard the response envelope (`foo?.data != null`) and call `setConnected(false)` on both network errors and `undefined` returns.
 
 ### Config typing
 
@@ -88,7 +99,7 @@ Device endpoints (base `http://<ip>:8050`):
 
 ### Test coverage
 
-- **`src/lib/ApSystemsEz1Client.test.ts`** — 20 unit tests with 100% line coverage on the client. Tests cover: URL construction, all endpoints (`getDeviceInfo`, `getOutputData`, `getOnOffStatus`, `getMaxPower`, `getAlarmInfo`), write methods (`setOnOffStatus`, `setMaxPower`) with URL encoding validation, exponential backoff retry logic (4 attempts on failure), debug logging when `log.level === "debug"`, error handling with `ignoreConnectionErrorMessages` flag, and non-200 status codes. Uses `sinon.stub(axios, "create")` mock strategy to inject a stubbed axios instance.
+- **`src/lib/ApSystemsEz1Client.test.ts`** — 23 unit tests with 100% branch + statement coverage on the client. Tests cover: URL construction, all endpoints (`getDeviceInfo`, `getOutputData`, `getOnOffStatus`, `getMaxPower`, `getAlarmInfo`), write methods (`setOnOffStatus`, `setMaxPower`) with URL encoding validation, write no-retry (exactly 1 attempt on network error), float rounding in `setMaxPower`, exponential backoff retry (4 total attempts on failure), debug logging when `log.level === "debug"`, error handling with `ignoreConnectionErrorMessages` flag, and non-200 status codes. Mock strategy: `sinon.stub(axios, "create").returns({ get: axiosGetStub })` — must stub `axios.create`, not `axios.get`, because the client uses `this.axiosInstance.get`.
 - **`src/main.test.ts`** — placeholder stub (asserts `5 === 5`); real integration tests of `main.ts` do not exist yet.
 - **`test:package`** — package manifest validation via `@iobroker/testing` does pass.
 
