@@ -1,4 +1,5 @@
-import axios, { AxiosResponse } from "axios";
+import axios, { AxiosInstance, AxiosResponse } from "axios";
+import http from "http";
 import { ReturnAlarmInfo } from "./ReturnAlarmInfo";
 import { ReturnDeviceInfo } from "./ReturnDeviceInfo";
 import { ReturnOutputData } from "./ReturnOutputData";
@@ -6,129 +7,90 @@ import { TypedReturnDto } from "./TypedReturnDto";
 import { ReturnOnOffStatus } from "./ReturnOnOffStatus";
 import { ReturnMaxPower } from "./ReturnMaxPower";
 
-export class ApSystemsEz1Client {
-	private baseUrl: string | undefined;
-	private ignoreConnectionErrorMessages: boolean | undefined;
-	private log!: ioBroker.Logger;
+const MAX_RETRIES = 3;
 
-	constructor(logger : ioBroker.Logger, ipAddress: string, port: number, ignoreConnectionErrorMessages: boolean = false) {
+export class ApSystemsEz1Client {
+	private baseUrl: string;
+	private ignoreConnectionErrorMessages: boolean;
+	private log: ioBroker.Logger;
+	private axiosInstance: AxiosInstance;
+
+	constructor(logger: ioBroker.Logger, ipAddress: string, port: number, ignoreConnectionErrorMessages: boolean = false) {
 		this.log = logger;
 		this.baseUrl = `http://${ipAddress}:${port}`;
 		this.ignoreConnectionErrorMessages = ignoreConnectionErrorMessages;
+
+		const httpAgent = new http.Agent({
+			keepAlive: true,
+			maxSockets: 1,
+			keepAliveMsecs: 1000,
+		});
+
+		this.axiosInstance = axios.create({ httpAgent, timeout: 5000 });
 	}
 
-
-	/**
-	 * A private method to send HTTP requests to the specified endpoint of the microinverter.
-	 * This method is used internally by other class methods to perform GET requests.
-	 * @param endpoint - The API endpoint to make the request to.
-	 * @returns The JSON response from the microinverter as a dictionary.
-	 * Prints an error message if the HTTP request fails for any reason.
- 	 */
-	private async getRequest<TResult>(endpoint: string): Promise<TResult | undefined> {
+	private async getRequest<TResult>(endpoint: string, attempt = 0): Promise<TResult | undefined> {
 		try {
-			const url: string = `${this.baseUrl}/${endpoint}`;
-			const response: AxiosResponse = await axios.get(url, { timeout: 5000 });
+			const url = `${this.baseUrl}/${endpoint}`;
+			const response: AxiosResponse = await this.axiosInstance.get(url);
 
-			// Handle the response data
-			this.log.debug(`Response: ${JSON.stringify(response.data)}`);
+			if (this.log.level === "debug") {
+				this.log.debug(`Response from ${endpoint}: ${JSON.stringify(response.data)}`);
+			}
+
 			if (response.status !== 200) {
 				this.handleClientError(response.statusText);
-			} else {
-				const result: TResult = response.data as TResult;
-				return result;
+				return undefined;
 			}
+
+			return response.data as TResult;
 		} catch (error) {
-			// Handle any errors that occurred during the request
+			if (attempt < MAX_RETRIES) {
+				const delayMs = Math.pow(2, attempt) * 100;
+				await new Promise(resolve => setTimeout(resolve, delayMs));
+				return this.getRequest<TResult>(endpoint, attempt + 1);
+			}
 			await this.handleClientError(error);
 		}
 	}
 
-	/**
-	 * Retrieves detailed information about the device. This method sends a request to the
-	 * "getDeviceInfo" endpoint and returns a dictionary containing various details about the device.
-	 * @returns The returned data includes the device ID, device version, the SSID it is connected to, its IP
-	 *  address, and its minimum and maximum power settings. This information can be used for monitoring
-	 *  and configuring the device.
-	 */
 	public async getDeviceInfo(): Promise<TypedReturnDto<ReturnDeviceInfo> | undefined> {
-		const result: TypedReturnDto<ReturnDeviceInfo> | undefined = await this.getRequest<TypedReturnDto<ReturnDeviceInfo>>("getDeviceInfo");
-		return result;
+		return this.getRequest<TypedReturnDto<ReturnDeviceInfo>>("getDeviceInfo");
 	}
 
-	/**
-	 * Retrieves the alarm status information for various components of the device. This method
-	 * makes a request to the "getAlarm" endpoint and returns a dictionary containing the alarm
-	 * status for different parameters.
-	 *
-	 * @returns The 'data' field in the returned dictionary includes the status of several components,
-	 * each represented as a string indicating whether there is an alarm ('1') or normal operation ('0').
-	 */
 	public async getAlarmInfo(): Promise<TypedReturnDto<ReturnAlarmInfo> | undefined> {
-		const result: TypedReturnDto<ReturnAlarmInfo> | undefined = await this.getRequest<TypedReturnDto<ReturnAlarmInfo>>("getAlarm");
-		return result;
+		return this.getRequest<TypedReturnDto<ReturnAlarmInfo>>("getAlarm");
 	}
 
-	/**
-	 * Retrieves the On/Off of EZ1 device.
-	 *
-	 * @returns The 'data' field in the returned dictionary includes the status of the device.
-	 * "0" means on, "1" means off.
-	 */
 	public async getOnOffStatus(): Promise<TypedReturnDto<ReturnOnOffStatus> | undefined> {
-		const result: TypedReturnDto<ReturnOnOffStatus> | undefined = await this.getRequest<TypedReturnDto<ReturnOnOffStatus>>("getOnOff");
-		return result;
+		return this.getRequest<TypedReturnDto<ReturnOnOffStatus>>("getOnOff");
 	}
 
-
-	/**
-	 * Retrieves the current output data for the device. This method
-	 * makes a request to the "getOutputData" endpoint to fetch the device's output data.
-	 *
-	 * @returns The returned data includes various parameters such as power output status ('p1', 'p2'),
-	 * energy readings ('e1', 'e2'), and total energy ('te1', 'te2') for two different inputs
-	 * of the inverter. Additionally, it provides a status message and the device ID.
-	 */
 	public async getOutputData(): Promise<TypedReturnDto<ReturnOutputData> | undefined> {
-		const result: TypedReturnDto<ReturnOutputData> | undefined = await this.getRequest<TypedReturnDto<ReturnOutputData>>("getOutputData");
-		return result;
+		return this.getRequest<TypedReturnDto<ReturnOutputData>>("getOutputData");
 	}
 
-	/**
-	 * Retrieves the set maximum power setting of the device. This method makes a request to the
-	 * "getMaxPower" endpoint and returns a dictionary containing the maximum power limit of the device set by the user.
-	 * @returns Max output power in watts
-	 */
 	public async getMaxPower(): Promise<TypedReturnDto<ReturnMaxPower> | undefined> {
-		const result: TypedReturnDto<ReturnMaxPower> | undefined = await this.getRequest<TypedReturnDto<ReturnMaxPower>>("getMaxPower");
-		return result;
+		return this.getRequest<TypedReturnDto<ReturnMaxPower>>("getMaxPower");
 	}
 
-	/**
-	 * Sets the maximum power output of the device.
-	 * @param watts - Target max power in watts (must be within device min/max range)
-	 */
 	public async setMaxPower(watts: number): Promise<TypedReturnDto<ReturnMaxPower> | undefined> {
-		return this.getRequest<TypedReturnDto<ReturnMaxPower>>(`setMaxPower?p=${watts}`);
+		const params = new URLSearchParams({ p: String(watts) });
+		return this.getRequest<TypedReturnDto<ReturnMaxPower>>(`setMaxPower?${params}`);
 	}
 
-	/**
-	 * Sets the On/Off status of the device.
-	 * When set to off, the device stops outputting power but the Local API remains active.
-	 * @param on - true to turn on, false to turn off
-	 */
 	public async setOnOffStatus(on: boolean): Promise<TypedReturnDto<ReturnOnOffStatus> | undefined> {
-		const status = on ? "0" : "1";
-		return this.getRequest<TypedReturnDto<ReturnOnOffStatus>>(`setOnOff?status=${status}`);
+		const params = new URLSearchParams({ status: on ? "0" : "1" });
+		return this.getRequest<TypedReturnDto<ReturnOnOffStatus>>(`setOnOff?${params}`);
 	}
 
 	private async handleClientError(error: unknown): Promise<void> {
 		if (this.ignoreConnectionErrorMessages) {
 			return;
 		} else if (error instanceof Error) {
-			this.log.error(`Unknown error: ${error.message}`)
+			this.log.error(`Unknown error: ${error.message}`);
 		} else {
-			this.log.error(`Unknown error: ${error}`)
+			this.log.error(`Unknown error: ${error}`);
 		}
 	}
 }

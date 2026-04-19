@@ -100,9 +100,6 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.markStateCreated("connected");
 		await this.setStateAsync("connected", { val: false, ack: true });
 
-		await this.setDeviceInfoStates();
-		await this.setMaxPowerState();
-
 		this.slowTimer = setInterval(() => {
 			void this.setDeviceInfoStates();
 			void this.setMaxPowerState();
@@ -113,6 +110,12 @@ class ApSystemsEz1 extends utils.Adapter {
 			void this.setAlarmInfoStates();
 			void this.setOnOffStatusState();
 		}, this.pollIntervalInMilliSeconds);
+
+		void this.setDeviceInfoStates();
+		void this.setMaxPowerState();
+		void this.setOutputDataStates();
+		void this.setAlarmInfoStates();
+		void this.setOnOffStatusState();
 
 		this.subscribeStates("OnOffStatus.OnOffStatus");
 		this.subscribeStates("MaxPower.MaxPower");
