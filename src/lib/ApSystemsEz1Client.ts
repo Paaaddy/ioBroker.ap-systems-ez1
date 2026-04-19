@@ -28,8 +28,6 @@ export class ApSystemsEz1Client {
 	private async getRequest<TResult>(endpoint: string): Promise<TResult | undefined> {
 		try {
 			const url: string = `${this.baseUrl}/${endpoint}`;
-			this.log.info(`url: ${url}`)
-
 			const response: AxiosResponse = await axios.get(url, { timeout: 5000 });
 
 			// Handle the response data

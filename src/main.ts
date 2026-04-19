@@ -2,13 +2,8 @@
  * Created with @iobroker/create-adapter v2.5.0
  */
 
-// The adapter-core module gives you access to the core ioBroker functions
-// you need to create an adapter
 import * as utils from "@iobroker/adapter-core";
 import { ApSystemsEz1Client } from "./lib/ApSystemsEz1Client";
-
-// Load your modules here, e.g.:
-// import * as fs from "fs";
 
 class ApSystemsEz1 extends utils.Adapter {
 
@@ -34,10 +29,6 @@ class ApSystemsEz1 extends utils.Adapter {
 	 * Is called when databases are connected and adapter received configuration.
 	 */
 	private async onReady(): Promise<void> {
-		// Initialize your adapter here
-
-		// The adapters config (in the instance object everything under the attribute "native") is accessible via
-		// this.config:
 		this.log.debug("config ipAddress: " + this.config.ipAddress);
 		this.log.debug("config port: " + this.config.port);
 		this.log.debug("config pollIntervalInSeconds: " + this.config.pollIntervalInSeconds);
@@ -76,40 +67,28 @@ class ApSystemsEz1 extends utils.Adapter {
 		});
 		await this.setStateAsync("connected", { val: false, ack: true });
 
-		this.setDeviceInfoStates();
-		this.setMaxPowerState();
+		await this.setDeviceInfoStates();
+		await this.setMaxPowerState();
+
 		this.slowTimer = setInterval(() => {
-			this.setDeviceInfoStates();
-			this.setMaxPowerState();
+			void this.setDeviceInfoStates();
+			void this.setMaxPowerState();
 		}, ApSystemsEz1.SLOW_POLL_INTERVAL_MS);
 
 		this.timer = setInterval(() => {
-			this.setOutputDataStates();
-			this.setAlarmInfoStates();
-			this.setOnOffStatusState();
+			void this.setOutputDataStates();
+			void this.setAlarmInfoStates();
+			void this.setOnOffStatusState();
 		}, this.pollIntervalInMilliSeconds);
 
 		this.subscribeStates("OnOffStatus.OnOffStatus");
 		this.subscribeStates("MaxPower.MaxPower");
-
-		// /*
-		// 	setState examples
-		// 	you will notice that each setState will cause the stateChange event to fire (because of above subscribeStates cmd)
-		// */
-		// // the variable testVariable is set to true as command (ack=false)
-		// await this.setStateAsync("testVariable", true);
-
-		// // same thing, but the value is flagged "ack"
-		// // ack should be always set to true if the value is received from or acknowledged from the target system
-		// await this.setStateAsync("testVariable", { val: true, ack: true });
-
-		// // same thing, but the state is deleted after 30s (getState will return null afterwards)
-		// await this.setStateAsync("testVariable", { val: true, ack: true, expire: 30 });
 	}
 
-	private setDeviceInfoStates() : void {
-		this.apiClient.getDeviceInfo().then(async (deviceInfo) => {
-			this.log.debug(`deviceInfo: ${JSON.stringify(deviceInfo)}`);
+	private async setDeviceInfoStates(): Promise<void> {
+		try {
+			const deviceInfo = await this.apiClient.getDeviceInfo();
+			this.log.debug("deviceInfo received");
 
 			if (deviceInfo !== undefined) {
 				await this.setConnected(true);
@@ -118,50 +97,44 @@ class ApSystemsEz1 extends utils.Adapter {
 					{ name: "DeviceId", value: res.deviceId },
 					{ name: "DevVer", value: res.devVer },
 					{ name: "Ssid", value: res.ssid },
-					{ name: "IpAddr", value: res.ipAddr }
+					{ name: "IpAddr", value: res.ipAddr },
 				];
 
-				strings.forEach(async (element) => {
+				for (const element of strings) {
 					if (!(await this.getStateAsync(`DeviceInfo.${element.name}`))) {
 						this.createState("DeviceInfo", "", element.name,
-							{
-								type: "string",
-								role: "text",
-								read: true,
-								write: false
-							}, () => this.log.info(`state ${element.name} created`));
+							{ type: "string", role: "text", read: true, write: false },
+							() => this.log.info(`state ${element.name} created`));
 					}
 					await this.setStateAsync(`DeviceInfo.${element.name}`, { val: element.value, ack: true });
-				});
+				}
 
 				const numbers = [
 					{ name: "MaxPower", value: res.maxPower },
-					{ name: "MinPower", value: res.minPower }
+					{ name: "MinPower", value: res.minPower },
 				];
 
-				numbers.forEach(async (element) => {
+				for (const element of numbers) {
 					if (!(await this.getStateAsync(`DeviceInfo.${element.name}`))) {
 						this.createState("DeviceInfo", "", element.name,
-							{
-								type: "number",
-								role: "value",
-								read: true,
-								write: false
-							}, () => this.log.info(`state ${element.name} created`));
+							{ type: "number", role: "value", read: true, write: false },
+							() => this.log.info(`state ${element.name} created`));
 					}
 					await this.setStateAsync(`DeviceInfo.${element.name}`, { val: element.value, ack: true });
-				});
+				}
 			} else {
 				await this.setConnected(false);
 			}
-		}).catch(async () => {
+		} catch (e) {
+			this.log.error(`setDeviceInfoStates failed: ${e}`);
 			await this.setConnected(false);
-		});
+		}
 	}
 
-	private setOutputDataStates() : void {
-		this.apiClient.getOutputData().then(async (outputData) => {
-			this.log.debug(`outputData: ${JSON.stringify(outputData)}`);
+	private async setOutputDataStates(): Promise<void> {
+		try {
+			const outputData = await this.apiClient.getOutputData();
+			this.log.debug("outputData received");
 
 			if (outputData !== undefined) {
 				const res = outputData.data;
@@ -177,25 +150,24 @@ class ApSystemsEz1 extends utils.Adapter {
 					{ name: "EnergyLifetime_Total", value: res.te1 + res.te2 },
 				];
 
-				numbers.forEach(async (element) => {
+				for (const element of numbers) {
 					if (!(await this.getStateAsync(`OutputData.${element.name}`))) {
 						this.createState("OutputData", "", element.name,
-							{
-								type: "number",
-								role: "value",
-								read: true,
-								write: false
-							}, () => this.log.info(`state ${element.name} created`));
+							{ type: "number", role: "value", read: true, write: false },
+							() => this.log.info(`state ${element.name} created`));
 					}
 					await this.setStateAsync(`OutputData.${element.name}`, { val: element.value, ack: true });
-				});
+				}
 			}
-		});
+		} catch (e) {
+			this.log.error(`setOutputDataStates failed: ${e}`);
+		}
 	}
 
-	private setAlarmInfoStates() : void {
-		this.apiClient.getAlarmInfo().then(async (alarmInfo) => {
-			this.log.debug(`alarmInfo: ${JSON.stringify(alarmInfo)}`);
+	private async setAlarmInfoStates(): Promise<void> {
+		try {
+			const alarmInfo = await this.apiClient.getAlarmInfo();
+			this.log.debug("alarmInfo received");
 
 			if (alarmInfo !== undefined) {
 				const res = alarmInfo.data;
@@ -206,64 +178,58 @@ class ApSystemsEz1 extends utils.Adapter {
 					{ name: "OutputFault", value: res.oe },
 				];
 
-				numbers.forEach(async (element) => {
+				for (const element of numbers) {
 					if (!(await this.getStateAsync(`AlarmInfo.${element.name}`))) {
 						this.createState("AlarmInfo", "", element.name,
-							{
-								type: "string",
-								role: "text",
-								read: true,
-								write: false
-							}, () => this.log.info(`state ${element.name} created`));
+							{ type: "string", role: "text", read: true, write: false },
+							() => this.log.info(`state ${element.name} created`));
 					}
-
 					const value = element.value === "0" ? "Normal" : "Alarm";
 					await this.setStateAsync(`AlarmInfo.${element.name}`, { val: value, ack: true });
-				});
+				}
 			}
-		});
+		} catch (e) {
+			this.log.error(`setAlarmInfoStates failed: ${e}`);
+		}
 	}
 
-	private setOnOffStatusState() : void {
-		this.apiClient.getOnOffStatus().then(async (onOffStatus) => {
-			this.log.debug(`onOffStatus: ${JSON.stringify(onOffStatus)}`);
+	private async setOnOffStatusState(): Promise<void> {
+		try {
+			const onOffStatus = await this.apiClient.getOnOffStatus();
+			this.log.debug("onOffStatus received");
 
 			if (onOffStatus !== undefined) {
 				const res = onOffStatus.data;
 				if (!(await this.getStateAsync("OnOffStatus.OnOffStatus"))) {
 					this.createState("OnOffStatus", "", "OnOffStatus",
-						{
-							type: "boolean",
-							role: "switch",
-							read: true,
-							write: true
-						}, () => this.log.info(`state OnOffStatus created`));
+						{ type: "boolean", role: "switch", read: true, write: true },
+						() => this.log.info(`state OnOffStatus created`));
 				}
 				const value = res.status === "0";
 				await this.setStateAsync(`OnOffStatus.OnOffStatus`, { val: value, ack: true });
 			}
-		});
+		} catch (e) {
+			this.log.error(`setOnOffStatusState failed: ${e}`);
+		}
 	}
 
-	private setMaxPowerState() : void {
-		this.apiClient.getMaxPower().then(async (maxPower) => {
-			this.log.debug(`maxPower: ${JSON.stringify(maxPower)}`);
+	private async setMaxPowerState(): Promise<void> {
+		try {
+			const maxPower = await this.apiClient.getMaxPower();
+			this.log.debug("maxPower received");
 
 			if (maxPower !== undefined) {
 				const res = maxPower.data;
 				if (!(await this.getStateAsync("MaxPower.MaxPower"))) {
 					this.createState("MaxPower", "", "MaxPower",
-						{
-							type: "number",
-							role: "value.power",
-							unit: "W",
-							read: true,
-							write: true
-						}, () => this.log.info(`state MaxPower created`));
+						{ type: "number", role: "value.power", unit: "W", read: true, write: true },
+						() => this.log.info(`state MaxPower created`));
 				}
 				await this.setStateAsync(`MaxPower.MaxPower`, { val: Number(res.maxPower), ack: true });
 			}
-		});
+		} catch (e) {
+			this.log.error(`setMaxPowerState failed: ${e}`);
+		}
 	}
 
 	private async setConnected(connected: boolean): Promise<void> {
@@ -315,7 +281,7 @@ class ApSystemsEz1 extends utils.Adapter {
 				this.log.error(`MaxPower: expected number, got ${typeof state.val}`);
 				return;
 			}
-			this.validateAndSetMaxPower(state.val);
+			void this.validateAndSetMaxPower(state.val);
 		}
 	}
 
@@ -331,7 +297,7 @@ class ApSystemsEz1 extends utils.Adapter {
 		const max = typeof maxState?.val === "number" && Number.isFinite(maxState.val) ? maxState.val : null;
 
 		if (min === null || max === null) {
-			this.log.error(`MaxPower ${watts}W rejected: device power limits not yet loaded. Wait for first poll to complete.`);
+			this.log.error(`MaxPower ${watts}W rejected: device power limits not yet loaded`);
 			return;
 		}
 		if (watts < min) {
