@@ -22,6 +22,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 var utils = __toESM(require("@iobroker/adapter-core"));
+var import_net = __toESM(require("net"));
 var import_ApSystemsEz1Client = require("./lib/ApSystemsEz1Client");
 const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
   constructor(options = {}) {
@@ -30,9 +31,11 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       name: "ap-systems-ez1"
     });
     this.pollIntervalInMilliSeconds = 60;
+    // 1 hour
+    // Serializes write commands — prevents concurrent device commands from racing
+    this.writeQueue = Promise.resolve();
     /**
      * Cache to track which states have been created to avoid repeated getStateAsync calls.
-     * This is populated during initialization and state creation callbacks.
      */
     this.createdStates = /* @__PURE__ */ new Set();
     this.on("ready", this.onReady.bind(this));
@@ -48,10 +51,9 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     this.log.debug("config port: " + this.config.port);
     this.log.debug("config pollIntervalInSeconds: " + this.config.pollIntervalInSeconds);
     this.log.debug("config ignoreConnectionErrorMessages: " + this.config.ignoreConnectionErrorMessages);
-    const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
     const port = Number((_a = this.config) == null ? void 0 : _a.port);
     const pollInterval = Number((_b = this.config) == null ? void 0 : _b.pollIntervalInSeconds);
-    if (!((_c = this.config) == null ? void 0 : _c.ipAddress) || !ipv4Pattern.test(this.config.ipAddress)) {
+    if (!((_c = this.config) == null ? void 0 : _c.ipAddress) || !import_net.default.isIPv4(this.config.ipAddress)) {
       this.log.error("Invalid IP address in config. Must be a valid IPv4 address.");
       return;
     }
@@ -78,8 +80,13 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     });
     this.markStateCreated("connected");
     await this.setStateAsync("connected", { val: false, ack: true });
-    await this.setDeviceInfoStates();
-    await this.setMaxPowerState();
+    await Promise.all([
+      this.setDeviceInfoStates(),
+      this.setMaxPowerState(),
+      this.setOutputDataStates(),
+      this.setAlarmInfoStates(),
+      this.setOnOffStatusState()
+    ]);
     this.slowTimer = setInterval(() => {
       void this.setDeviceInfoStates();
       void this.setMaxPowerState();
@@ -102,13 +109,13 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const stringPromises = _ApSystemsEz1.DEVICE_INFO_STRINGS.map(async (element) => {
           const stateId = `DeviceInfo.${element.name}`;
           if (!this.stateExists(stateId)) {
+            this.markStateCreated(stateId);
             this.createState(
               "DeviceInfo",
               "",
               element.name,
               { type: "string", role: "text", read: true, write: false },
               () => {
-                this.markStateCreated(stateId);
                 this.log.info(`state ${element.name} created`);
               }
             );
@@ -118,13 +125,13 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const numberPromises = _ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
           const stateId = `DeviceInfo.${element.name}`;
           if (!this.stateExists(stateId)) {
+            this.markStateCreated(stateId);
             this.createState(
               "DeviceInfo",
               "",
               element.name,
               { type: "number", role: "value", read: true, write: false },
               () => {
-                this.markStateCreated(stateId);
                 this.log.info(`state ${element.name} created`);
               }
             );
@@ -149,13 +156,13 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const promises = _ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
           const stateId = `OutputData.${element.name}`;
           if (!this.stateExists(stateId)) {
+            this.markStateCreated(stateId);
             this.createState(
               "OutputData",
               "",
               element.name,
-              { type: "number", role: "value", read: true, write: false },
+              { type: "number", role: element.role, unit: element.unit, read: true, write: false },
               () => {
-                this.markStateCreated(stateId);
                 this.log.info(`state ${element.name} created`);
               }
             );
@@ -163,9 +170,12 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
           await this.setStateAsync(stateId, { val: element.value(res), ack: true });
         });
         await Promise.all(promises);
+      } else {
+        await this.setConnected(false);
       }
     } catch (e) {
       this.log.error(`setOutputDataStates failed: ${e}`);
+      await this.setConnected(false);
     }
   }
   async setAlarmInfoStates() {
@@ -177,25 +187,32 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const promises = _ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
           const stateId = `AlarmInfo.${element.name}`;
           if (!this.stateExists(stateId)) {
+            this.markStateCreated(stateId);
             this.createState(
               "AlarmInfo",
               "",
               element.name,
               { type: "string", role: "text", read: true, write: false },
               () => {
-                this.markStateCreated(stateId);
                 this.log.info(`state ${element.name} created`);
               }
             );
           }
           const rawValue = element.value(res);
+          if (rawValue !== "0" && rawValue !== "1") {
+            this.log.error(`Unexpected alarm value for ${element.name}: ${rawValue}`);
+            return;
+          }
           const value = rawValue === "0" ? "Normal" : "Alarm";
           await this.setStateAsync(stateId, { val: value, ack: true });
         });
         await Promise.all(promises);
+      } else {
+        await this.setConnected(false);
       }
     } catch (e) {
       this.log.error(`setAlarmInfoStates failed: ${e}`);
+      await this.setConnected(false);
     }
   }
   async setOnOffStatusState() {
@@ -206,22 +223,29 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const res = onOffStatus.data;
         const stateId = "OnOffStatus.OnOffStatus";
         if (!this.stateExists(stateId)) {
+          this.markStateCreated(stateId);
           this.createState(
             "OnOffStatus",
             "",
             "OnOffStatus",
             { type: "boolean", role: "switch", read: true, write: true },
             () => {
-              this.markStateCreated(stateId);
               this.log.info(`state OnOffStatus created`);
             }
           );
         }
+        if (res.status !== "0" && res.status !== "1") {
+          this.log.error(`Unexpected OnOffStatus from device: ${res.status}`);
+          return;
+        }
         const value = res.status === "0";
         await this.setStateAsync(stateId, { val: value, ack: true });
+      } else {
+        await this.setConnected(false);
       }
     } catch (e) {
       this.log.error(`setOnOffStatusState failed: ${e}`);
+      await this.setConnected(false);
     }
   }
   async setMaxPowerState() {
@@ -230,40 +254,39 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.log.debug("maxPower received");
       if (maxPower !== void 0) {
         const res = maxPower.data;
+        const powerValue = Number(res.maxPower);
+        if (!Number.isFinite(powerValue)) {
+          this.log.error(`Invalid maxPower from device: ${res.maxPower}`);
+          return;
+        }
         const stateId = "MaxPower.MaxPower";
         if (!this.stateExists(stateId)) {
+          this.markStateCreated(stateId);
           this.createState(
             "MaxPower",
             "",
             "MaxPower",
             { type: "number", role: "value.power", unit: "W", read: true, write: true },
             () => {
-              this.markStateCreated(stateId);
               this.log.info(`state MaxPower created`);
             }
           );
         }
-        await this.setStateAsync(stateId, { val: Number(res.maxPower), ack: true });
+        await this.setStateAsync(stateId, { val: powerValue, ack: true });
+      } else {
+        await this.setConnected(false);
       }
     } catch (e) {
       this.log.error(`setMaxPowerState failed: ${e}`);
+      await this.setConnected(false);
     }
   }
   async setConnected(connected) {
     await this.setStateAsync("connected", { val: connected, ack: true });
   }
-  /**
-   * Check if a state has been created (without a database call).
-   * @param stateId State ID relative to adapter namespace
-   * @returns true if state was created by this adapter, false otherwise
-   */
   stateExists(stateId) {
     return this.createdStates.has(stateId);
   }
-  /**
-   * Mark a state as created in the cache.
-   * @param stateId State ID relative to adapter namespace
-   */
   markStateCreated(stateId) {
     this.createdStates.add(stateId);
   }
@@ -279,20 +302,6 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       callback();
     }
   }
-  // If you need to react to object changes, uncomment the following block and the corresponding line in the constructor.
-  // You also need to subscribe to the objects with `this.subscribeObjects`, similar to `this.subscribeStates`.
-  // /**
-  //  * Is called if a subscribed object changes
-  //  */
-  // private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
-  // 	if (obj) {
-  // 		// The object was changed
-  // 		this.log.info(`object ${id} changed: ${JSON.stringify(obj)}`);
-  // 	} else {
-  // 		// The object was deleted
-  // 		this.log.info(`object ${id} deleted`);
-  // 	}
-  // }
   onStateChange(id, state) {
     if (!state || state.ack) {
       return;
@@ -302,14 +311,35 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         this.log.error(`OnOffStatus: expected boolean, got ${typeof state.val}`);
         return;
       }
-      this.apiClient.setOnOffStatus(state.val).then(() => this.log.info(`OnOff set to ${state.val}`)).catch((e) => this.log.error(`Failed to set OnOff: ${e}`));
+      const target = state.val;
+      this.writeQueue = this.writeQueue.then(() => this.applyOnOffStatus(target)).catch(() => {
+      });
     } else if (id.endsWith(".MaxPower.MaxPower")) {
       if (typeof state.val !== "number") {
         this.log.error(`MaxPower: expected number, got ${typeof state.val}`);
         return;
       }
-      void this.validateAndSetMaxPower(state.val);
+      const watts = state.val;
+      this.writeQueue = this.writeQueue.then(() => this.validateAndSetMaxPower(watts)).catch(() => {
+      });
     }
+  }
+  async applyOnOffStatus(on) {
+    await this.apiClient.setOnOffStatus(on);
+    await new Promise((r) => setTimeout(r, 500));
+    const confirmed = await this.apiClient.getOnOffStatus();
+    if (!confirmed) {
+      this.log.error(`OnOff command sent but could not verify device state`);
+      return;
+    }
+    const expected = on ? "0" : "1";
+    if (confirmed.data.status !== expected) {
+      this.log.error(`OnOff verification failed: sent ${on}, device reports status=${confirmed.data.status}`);
+      const actual = confirmed.data.status === "0";
+      await this.setStateAsync("OnOffStatus.OnOffStatus", { val: actual, ack: true });
+      return;
+    }
+    this.log.info(`OnOff set to ${on}`);
   }
   async validateAndSetMaxPower(watts) {
     if (!Number.isFinite(watts)) {
@@ -332,8 +362,37 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.log.error(`MaxPower ${watts}W rejected: above device maximum ${max}W`);
       return;
     }
-    this.apiClient.setMaxPower(watts).then(() => this.log.info(`MaxPower set to ${watts}W`)).catch((e) => this.log.error(`Failed to set MaxPower: ${e}`));
+    await this.apiClient.setMaxPower(watts);
+    await new Promise((r) => setTimeout(r, 500));
+    const confirmed = await this.apiClient.getMaxPower();
+    if (!confirmed) {
+      this.log.error(`MaxPower command sent but could not verify device state`);
+      return;
+    }
+    const actual = Number(confirmed.data.maxPower);
+    if (!Number.isFinite(actual) || actual !== watts) {
+      this.log.error(`MaxPower verification failed: sent ${watts}W, device reports ${confirmed.data.maxPower}W`);
+      if (Number.isFinite(actual)) {
+        await this.setStateAsync("MaxPower.MaxPower", { val: actual, ack: true });
+      }
+      return;
+    }
+    this.log.info(`MaxPower set to ${watts}W`);
   }
+  // If you need to react to object changes, uncomment the following block and the corresponding line in the constructor.
+  // You also need to subscribe to the objects with `this.subscribeObjects`, similar to `this.subscribeStates`.
+  // /**
+  //  * Is called if a subscribed object changes
+  //  */
+  // private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
+  // 	if (obj) {
+  // 		// The object was changed
+  // 		this.log.info(`object ${id} changed: ${JSON.stringify(obj)}`);
+  // 	} else {
+  // 		// The object was deleted
+  // 		this.log.info(`object ${id} deleted`);
+  // 	}
+  // }
   // If you need to accept messages in your adapter, uncomment the following block and the corresponding line in the constructor.
   // /**
   //  * Some message was sent to this instance over message box. Used by email, pushover, text2speech, ...
@@ -351,7 +410,6 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
   // }
 };
 _ApSystemsEz1.SLOW_POLL_INTERVAL_MS = 60 * 60 * 1e3;
-// 1 hour
 // State mappings cached to avoid object allocation on every poll cycle
 _ApSystemsEz1.DEVICE_INFO_STRINGS = [
   { name: "DeviceId", value: (res) => res.deviceId },
@@ -364,15 +422,15 @@ _ApSystemsEz1.DEVICE_INFO_NUMBERS = [
   { name: "MinPower", value: (res) => res.minPower }
 ];
 _ApSystemsEz1.OUTPUT_DATA_NUMBERS = [
-  { name: "CurrentPower_1", value: (res) => res.p1 },
-  { name: "CurrentPower_2", value: (res) => res.p2 },
-  { name: "CurrentPower_Total", value: (res) => res.p1 + res.p2 },
-  { name: "EnergyToday_1", value: (res) => res.e1 },
-  { name: "EnergyToday_2", value: (res) => res.e2 },
-  { name: "EnergyToday_Total", value: (res) => res.e1 + res.e2 },
-  { name: "EnergyLifetime_1", value: (res) => res.te1 },
-  { name: "EnergyLifetime_2", value: (res) => res.te2 },
-  { name: "EnergyLifetime_Total", value: (res) => res.te1 + res.te2 }
+  { name: "CurrentPower_1", role: "value.power", unit: "W", value: (res) => res.p1 },
+  { name: "CurrentPower_2", role: "value.power", unit: "W", value: (res) => res.p2 },
+  { name: "CurrentPower_Total", role: "value.power", unit: "W", value: (res) => res.p1 + res.p2 },
+  { name: "EnergyToday_1", role: "value.energy", unit: "kWh", value: (res) => res.e1 },
+  { name: "EnergyToday_2", role: "value.energy", unit: "kWh", value: (res) => res.e2 },
+  { name: "EnergyToday_Total", role: "value.energy", unit: "kWh", value: (res) => res.e1 + res.e2 },
+  { name: "EnergyLifetime_1", role: "value.energy", unit: "kWh", value: (res) => res.te1 },
+  { name: "EnergyLifetime_2", role: "value.energy", unit: "kWh", value: (res) => res.te2 },
+  { name: "EnergyLifetime_Total", role: "value.energy", unit: "kWh", value: (res) => res.te1 + res.te2 }
 ];
 _ApSystemsEz1.ALARM_INFO_NUMBERS = [
   { name: "OffGrid", value: (res) => res.og },

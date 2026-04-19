@@ -32,103 +32,83 @@ __export(ApSystemsEz1Client_exports, {
 });
 module.exports = __toCommonJS(ApSystemsEz1Client_exports);
 var import_axios = __toESM(require("axios"));
+var import_http = __toESM(require("http"));
+const MAX_RETRIES = 3;
 class ApSystemsEz1Client {
   constructor(logger, ipAddress, port, ignoreConnectionErrorMessages = false) {
     this.log = logger;
     this.baseUrl = `http://${ipAddress}:${port}`;
     this.ignoreConnectionErrorMessages = ignoreConnectionErrorMessages;
+    const httpAgent = new import_http.default.Agent({
+      keepAlive: true,
+      maxSockets: 1,
+      keepAliveMsecs: 1e3,
+      // Close idle sockets so stale keep-alive connections don't hang after device reboot
+      timeout: 1e4
+    });
+    this.axiosInstance = import_axios.default.create({ httpAgent, timeout: 5e3 });
   }
-  /**
-   * A private method to send HTTP requests to the specified endpoint of the microinverter.
-   * This method is used internally by other class methods to perform GET requests.
-   * @param endpoint - The API endpoint to make the request to.
-   * @returns The JSON response from the microinverter as a dictionary.
-   * Prints an error message if the HTTP request fails for any reason.
-  	 */
-  async getRequest(endpoint) {
+  // Read endpoints: retry on transient network failure (idempotent)
+  async getRequest(endpoint, attempt = 0) {
     try {
       const url = `${this.baseUrl}/${endpoint}`;
-      const response = await import_axios.default.get(url, { timeout: 5e3 });
-      this.log.debug(`Response: ${JSON.stringify(response.data)}`);
+      const response = await this.axiosInstance.get(url);
+      if (this.log.level === "debug") {
+        this.log.debug(`Response from ${endpoint}: ${JSON.stringify(response.data)}`);
+      }
       if (response.status !== 200) {
         this.handleClientError(response.statusText);
-      } else {
-        const result = response.data;
-        return result;
+        return void 0;
       }
+      return response.data;
+    } catch (error) {
+      if (attempt < MAX_RETRIES) {
+        const delayMs = Math.pow(2, attempt) * 100;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return this.getRequest(endpoint, attempt + 1);
+      }
+      await this.handleClientError(error);
+    }
+  }
+  // Write endpoints: fail-fast, no retries — device may apply command before response times out
+  async setRequest(endpoint) {
+    try {
+      const url = `${this.baseUrl}/${endpoint}`;
+      const response = await this.axiosInstance.get(url);
+      if (this.log.level === "debug") {
+        this.log.debug(`Response from ${endpoint}: ${JSON.stringify(response.data)}`);
+      }
+      if (response.status !== 200) {
+        this.handleClientError(response.statusText);
+        return void 0;
+      }
+      return response.data;
     } catch (error) {
       await this.handleClientError(error);
     }
   }
-  /**
-   * Retrieves detailed information about the device. This method sends a request to the
-   * "getDeviceInfo" endpoint and returns a dictionary containing various details about the device.
-   * @returns The returned data includes the device ID, device version, the SSID it is connected to, its IP
-   *  address, and its minimum and maximum power settings. This information can be used for monitoring
-   *  and configuring the device.
-   */
   async getDeviceInfo() {
-    const result = await this.getRequest("getDeviceInfo");
-    return result;
+    return this.getRequest("getDeviceInfo");
   }
-  /**
-   * Retrieves the alarm status information for various components of the device. This method
-   * makes a request to the "getAlarm" endpoint and returns a dictionary containing the alarm
-   * status for different parameters.
-   *
-   * @returns The 'data' field in the returned dictionary includes the status of several components,
-   * each represented as a string indicating whether there is an alarm ('1') or normal operation ('0').
-   */
   async getAlarmInfo() {
-    const result = await this.getRequest("getAlarm");
-    return result;
+    return this.getRequest("getAlarm");
   }
-  /**
-   * Retrieves the On/Off of EZ1 device.
-   *
-   * @returns The 'data' field in the returned dictionary includes the status of the device.
-   * "0" means on, "1" means off.
-   */
   async getOnOffStatus() {
-    const result = await this.getRequest("getOnOff");
-    return result;
+    return this.getRequest("getOnOff");
   }
-  /**
-   * Retrieves the current output data for the device. This method
-   * makes a request to the "getOutputData" endpoint to fetch the device's output data.
-   *
-   * @returns The returned data includes various parameters such as power output status ('p1', 'p2'),
-   * energy readings ('e1', 'e2'), and total energy ('te1', 'te2') for two different inputs
-   * of the inverter. Additionally, it provides a status message and the device ID.
-   */
   async getOutputData() {
-    const result = await this.getRequest("getOutputData");
-    return result;
+    return this.getRequest("getOutputData");
   }
-  /**
-   * Retrieves the set maximum power setting of the device. This method makes a request to the
-   * "getMaxPower" endpoint and returns a dictionary containing the maximum power limit of the device set by the user.
-   * @returns Max output power in watts
-   */
   async getMaxPower() {
-    const result = await this.getRequest("getMaxPower");
-    return result;
+    return this.getRequest("getMaxPower");
   }
-  /**
-   * Sets the maximum power output of the device.
-   * @param watts - Target max power in watts (must be within device min/max range)
-   */
   async setMaxPower(watts) {
-    return this.getRequest(`setMaxPower?p=${watts}`);
+    const params = new URLSearchParams({ p: String(Math.round(watts)) });
+    return this.setRequest(`setMaxPower?${params}`);
   }
-  /**
-   * Sets the On/Off status of the device.
-   * When set to off, the device stops outputting power but the Local API remains active.
-   * @param on - true to turn on, false to turn off
-   */
   async setOnOffStatus(on) {
-    const status = on ? "0" : "1";
-    return this.getRequest(`setOnOff?status=${status}`);
+    const params = new URLSearchParams({ status: on ? "0" : "1" });
+    return this.setRequest(`setOnOff?${params}`);
   }
   async handleClientError(error) {
     if (this.ignoreConnectionErrorMessages) {
