@@ -24,13 +24,17 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var utils = __toESM(require("@iobroker/adapter-core"));
 var import_ApSystemsEz1Client = require("./lib/ApSystemsEz1Client");
 const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
-  // 1 hour
   constructor(options = {}) {
     super({
       ...options,
       name: "ap-systems-ez1"
     });
     this.pollIntervalInMilliSeconds = 60;
+    /**
+     * Cache to track which states have been created to avoid repeated getStateAsync calls.
+     * This is populated during initialization and state creation callbacks.
+     */
+    this.createdStates = /* @__PURE__ */ new Set();
     this.on("ready", this.onReady.bind(this));
     this.on("stateChange", this.onStateChange.bind(this));
     this.on("unload", this.onUnload.bind(this));
@@ -72,6 +76,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       },
       native: {}
     });
+    this.markStateCreated("connected");
     await this.setStateAsync("connected", { val: false, ack: true });
     await this.setDeviceInfoStates();
     await this.setMaxPowerState();
@@ -94,40 +99,39 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       if (deviceInfo !== void 0) {
         await this.setConnected(true);
         const res = deviceInfo.data;
-        const strings = [
-          { name: "DeviceId", value: res.deviceId },
-          { name: "DevVer", value: res.devVer },
-          { name: "Ssid", value: res.ssid },
-          { name: "IpAddr", value: res.ipAddr }
-        ];
-        for (const element of strings) {
-          if (!await this.getStateAsync(`DeviceInfo.${element.name}`)) {
+        const stringPromises = _ApSystemsEz1.DEVICE_INFO_STRINGS.map(async (element) => {
+          const stateId = `DeviceInfo.${element.name}`;
+          if (!this.stateExists(stateId)) {
             this.createState(
               "DeviceInfo",
               "",
               element.name,
               { type: "string", role: "text", read: true, write: false },
-              () => this.log.info(`state ${element.name} created`)
+              () => {
+                this.markStateCreated(stateId);
+                this.log.info(`state ${element.name} created`);
+              }
             );
           }
-          await this.setStateAsync(`DeviceInfo.${element.name}`, { val: element.value, ack: true });
-        }
-        const numbers = [
-          { name: "MaxPower", value: res.maxPower },
-          { name: "MinPower", value: res.minPower }
-        ];
-        for (const element of numbers) {
-          if (!await this.getStateAsync(`DeviceInfo.${element.name}`)) {
+          await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+        });
+        const numberPromises = _ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
+          const stateId = `DeviceInfo.${element.name}`;
+          if (!this.stateExists(stateId)) {
             this.createState(
               "DeviceInfo",
               "",
               element.name,
               { type: "number", role: "value", read: true, write: false },
-              () => this.log.info(`state ${element.name} created`)
+              () => {
+                this.markStateCreated(stateId);
+                this.log.info(`state ${element.name} created`);
+              }
             );
           }
-          await this.setStateAsync(`DeviceInfo.${element.name}`, { val: element.value, ack: true });
-        }
+          await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+        });
+        await Promise.all([...stringPromises, ...numberPromises]);
       } else {
         await this.setConnected(false);
       }
@@ -142,29 +146,23 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.log.debug("outputData received");
       if (outputData !== void 0) {
         const res = outputData.data;
-        const numbers = [
-          { name: "CurrentPower_1", value: res.p1 },
-          { name: "CurrentPower_2", value: res.p2 },
-          { name: "CurrentPower_Total", value: res.p1 + res.p2 },
-          { name: "EnergyToday_1", value: res.e1 },
-          { name: "EnergyToday_2", value: res.e2 },
-          { name: "EnergyToday_Total", value: res.e1 + res.e2 },
-          { name: "EnergyLifetime_1", value: res.te1 },
-          { name: "EnergyLifetime_2", value: res.te2 },
-          { name: "EnergyLifetime_Total", value: res.te1 + res.te2 }
-        ];
-        for (const element of numbers) {
-          if (!await this.getStateAsync(`OutputData.${element.name}`)) {
+        const promises = _ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
+          const stateId = `OutputData.${element.name}`;
+          if (!this.stateExists(stateId)) {
             this.createState(
               "OutputData",
               "",
               element.name,
               { type: "number", role: "value", read: true, write: false },
-              () => this.log.info(`state ${element.name} created`)
+              () => {
+                this.markStateCreated(stateId);
+                this.log.info(`state ${element.name} created`);
+              }
             );
           }
-          await this.setStateAsync(`OutputData.${element.name}`, { val: element.value, ack: true });
-        }
+          await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+        });
+        await Promise.all(promises);
       }
     } catch (e) {
       this.log.error(`setOutputDataStates failed: ${e}`);
@@ -176,25 +174,25 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.log.debug("alarmInfo received");
       if (alarmInfo !== void 0) {
         const res = alarmInfo.data;
-        const numbers = [
-          { name: "OffGrid", value: res.og },
-          { name: "ShortCircuitError_1", value: res.isce1 },
-          { name: "ShortCircuitError_2", value: res.isce2 },
-          { name: "OutputFault", value: res.oe }
-        ];
-        for (const element of numbers) {
-          if (!await this.getStateAsync(`AlarmInfo.${element.name}`)) {
+        const promises = _ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
+          const stateId = `AlarmInfo.${element.name}`;
+          if (!this.stateExists(stateId)) {
             this.createState(
               "AlarmInfo",
               "",
               element.name,
               { type: "string", role: "text", read: true, write: false },
-              () => this.log.info(`state ${element.name} created`)
+              () => {
+                this.markStateCreated(stateId);
+                this.log.info(`state ${element.name} created`);
+              }
             );
           }
-          const value = element.value === "0" ? "Normal" : "Alarm";
-          await this.setStateAsync(`AlarmInfo.${element.name}`, { val: value, ack: true });
-        }
+          const rawValue = element.value(res);
+          const value = rawValue === "0" ? "Normal" : "Alarm";
+          await this.setStateAsync(stateId, { val: value, ack: true });
+        });
+        await Promise.all(promises);
       }
     } catch (e) {
       this.log.error(`setAlarmInfoStates failed: ${e}`);
@@ -206,17 +204,21 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.log.debug("onOffStatus received");
       if (onOffStatus !== void 0) {
         const res = onOffStatus.data;
-        if (!await this.getStateAsync("OnOffStatus.OnOffStatus")) {
+        const stateId = "OnOffStatus.OnOffStatus";
+        if (!this.stateExists(stateId)) {
           this.createState(
             "OnOffStatus",
             "",
             "OnOffStatus",
             { type: "boolean", role: "switch", read: true, write: true },
-            () => this.log.info(`state OnOffStatus created`)
+            () => {
+              this.markStateCreated(stateId);
+              this.log.info(`state OnOffStatus created`);
+            }
           );
         }
         const value = res.status === "0";
-        await this.setStateAsync(`OnOffStatus.OnOffStatus`, { val: value, ack: true });
+        await this.setStateAsync(stateId, { val: value, ack: true });
       }
     } catch (e) {
       this.log.error(`setOnOffStatusState failed: ${e}`);
@@ -228,16 +230,20 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.log.debug("maxPower received");
       if (maxPower !== void 0) {
         const res = maxPower.data;
-        if (!await this.getStateAsync("MaxPower.MaxPower")) {
+        const stateId = "MaxPower.MaxPower";
+        if (!this.stateExists(stateId)) {
           this.createState(
             "MaxPower",
             "",
             "MaxPower",
             { type: "number", role: "value.power", unit: "W", read: true, write: true },
-            () => this.log.info(`state MaxPower created`)
+            () => {
+              this.markStateCreated(stateId);
+              this.log.info(`state MaxPower created`);
+            }
           );
         }
-        await this.setStateAsync(`MaxPower.MaxPower`, { val: Number(res.maxPower), ack: true });
+        await this.setStateAsync(stateId, { val: Number(res.maxPower), ack: true });
       }
     } catch (e) {
       this.log.error(`setMaxPowerState failed: ${e}`);
@@ -245,6 +251,21 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
   }
   async setConnected(connected) {
     await this.setStateAsync("connected", { val: connected, ack: true });
+  }
+  /**
+   * Check if a state has been created (without a database call).
+   * @param stateId State ID relative to adapter namespace
+   * @returns true if state was created by this adapter, false otherwise
+   */
+  stateExists(stateId) {
+    return this.createdStates.has(stateId);
+  }
+  /**
+   * Mark a state as created in the cache.
+   * @param stateId State ID relative to adapter namespace
+   */
+  markStateCreated(stateId) {
+    this.createdStates.add(stateId);
   }
   /**
    * Is called when adapter shuts down - callback has to be called under any circumstances!
@@ -330,6 +351,35 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
   // }
 };
 _ApSystemsEz1.SLOW_POLL_INTERVAL_MS = 60 * 60 * 1e3;
+// 1 hour
+// State mappings cached to avoid object allocation on every poll cycle
+_ApSystemsEz1.DEVICE_INFO_STRINGS = [
+  { name: "DeviceId", value: (res) => res.deviceId },
+  { name: "DevVer", value: (res) => res.devVer },
+  { name: "Ssid", value: (res) => res.ssid },
+  { name: "IpAddr", value: (res) => res.ipAddr }
+];
+_ApSystemsEz1.DEVICE_INFO_NUMBERS = [
+  { name: "MaxPower", value: (res) => res.maxPower },
+  { name: "MinPower", value: (res) => res.minPower }
+];
+_ApSystemsEz1.OUTPUT_DATA_NUMBERS = [
+  { name: "CurrentPower_1", value: (res) => res.p1 },
+  { name: "CurrentPower_2", value: (res) => res.p2 },
+  { name: "CurrentPower_Total", value: (res) => res.p1 + res.p2 },
+  { name: "EnergyToday_1", value: (res) => res.e1 },
+  { name: "EnergyToday_2", value: (res) => res.e2 },
+  { name: "EnergyToday_Total", value: (res) => res.e1 + res.e2 },
+  { name: "EnergyLifetime_1", value: (res) => res.te1 },
+  { name: "EnergyLifetime_2", value: (res) => res.te2 },
+  { name: "EnergyLifetime_Total", value: (res) => res.te1 + res.te2 }
+];
+_ApSystemsEz1.ALARM_INFO_NUMBERS = [
+  { name: "OffGrid", value: (res) => res.og },
+  { name: "ShortCircuitError_1", value: (res) => res.isce1 },
+  { name: "ShortCircuitError_2", value: (res) => res.isce2 },
+  { name: "OutputFault", value: (res) => res.oe }
+];
 let ApSystemsEz1 = _ApSystemsEz1;
 if (require.main !== module) {
   module.exports = (options) => new ApSystemsEz1(options);

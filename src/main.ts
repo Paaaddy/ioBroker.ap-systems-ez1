@@ -13,6 +13,38 @@ class ApSystemsEz1 extends utils.Adapter {
 	private slowTimer: NodeJS.Timeout | undefined;
 	private static readonly SLOW_POLL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
+	// State mappings cached to avoid object allocation on every poll cycle
+	private static readonly DEVICE_INFO_STRINGS = [
+		{ name: "DeviceId", value: (res: any) => res.deviceId },
+		{ name: "DevVer", value: (res: any) => res.devVer },
+		{ name: "Ssid", value: (res: any) => res.ssid },
+		{ name: "IpAddr", value: (res: any) => res.ipAddr },
+	];
+
+	private static readonly DEVICE_INFO_NUMBERS = [
+		{ name: "MaxPower", value: (res: any) => res.maxPower },
+		{ name: "MinPower", value: (res: any) => res.minPower },
+	];
+
+	private static readonly OUTPUT_DATA_NUMBERS = [
+		{ name: "CurrentPower_1", value: (res: any) => res.p1 },
+		{ name: "CurrentPower_2", value: (res: any) => res.p2 },
+		{ name: "CurrentPower_Total", value: (res: any) => res.p1 + res.p2 },
+		{ name: "EnergyToday_1", value: (res: any) => res.e1 },
+		{ name: "EnergyToday_2", value: (res: any) => res.e2 },
+		{ name: "EnergyToday_Total", value: (res: any) => res.e1 + res.e2 },
+		{ name: "EnergyLifetime_1", value: (res: any) => res.te1 },
+		{ name: "EnergyLifetime_2", value: (res: any) => res.te2 },
+		{ name: "EnergyLifetime_Total", value: (res: any) => res.te1 + res.te2 },
+	];
+
+	private static readonly ALARM_INFO_NUMBERS = [
+		{ name: "OffGrid", value: (res: any) => res.og },
+		{ name: "ShortCircuitError_1", value: (res: any) => res.isce1 },
+		{ name: "ShortCircuitError_2", value: (res: any) => res.isce2 },
+		{ name: "OutputFault", value: (res: any) => res.oe },
+	];
+
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
 			...options,
@@ -65,6 +97,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			},
 			native: {},
 		});
+		this.markStateCreated("connected");
 		await this.setStateAsync("connected", { val: false, ack: true });
 
 		await this.setDeviceInfoStates();
@@ -93,35 +126,37 @@ class ApSystemsEz1 extends utils.Adapter {
 			if (deviceInfo !== undefined) {
 				await this.setConnected(true);
 				const res = deviceInfo.data;
-				const strings = [
-					{ name: "DeviceId", value: res.deviceId },
-					{ name: "DevVer", value: res.devVer },
-					{ name: "Ssid", value: res.ssid },
-					{ name: "IpAddr", value: res.ipAddr },
-				];
 
-				for (const element of strings) {
-					if (!(await this.getStateAsync(`DeviceInfo.${element.name}`))) {
+				// Parallelize state creation and setting for both strings and numbers
+				const stringPromises = ApSystemsEz1.DEVICE_INFO_STRINGS.map(async (element) => {
+					const stateId = `DeviceInfo.${element.name}`;
+					// Only create state once if it doesn't exist, avoid repeated getStateAsync calls
+					if (!this.stateExists(stateId)) {
 						this.createState("DeviceInfo", "", element.name,
 							{ type: "string", role: "text", read: true, write: false },
-							() => this.log.info(`state ${element.name} created`));
+							() => {
+								this.markStateCreated(stateId);
+								this.log.info(`state ${element.name} created`);
+							});
 					}
-					await this.setStateAsync(`DeviceInfo.${element.name}`, { val: element.value, ack: true });
-				}
+					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+				});
 
-				const numbers = [
-					{ name: "MaxPower", value: res.maxPower },
-					{ name: "MinPower", value: res.minPower },
-				];
-
-				for (const element of numbers) {
-					if (!(await this.getStateAsync(`DeviceInfo.${element.name}`))) {
+				const numberPromises = ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
+					const stateId = `DeviceInfo.${element.name}`;
+					// Only create state once if it doesn't exist, avoid repeated getStateAsync calls
+					if (!this.stateExists(stateId)) {
 						this.createState("DeviceInfo", "", element.name,
 							{ type: "number", role: "value", read: true, write: false },
-							() => this.log.info(`state ${element.name} created`));
+							() => {
+								this.markStateCreated(stateId);
+								this.log.info(`state ${element.name} created`);
+							});
 					}
-					await this.setStateAsync(`DeviceInfo.${element.name}`, { val: element.value, ack: true });
-				}
+					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+				});
+
+				await Promise.all([...stringPromises, ...numberPromises]);
 			} else {
 				await this.setConnected(false);
 			}
@@ -138,26 +173,22 @@ class ApSystemsEz1 extends utils.Adapter {
 
 			if (outputData !== undefined) {
 				const res = outputData.data;
-				const numbers = [
-					{ name: "CurrentPower_1", value: res.p1 },
-					{ name: "CurrentPower_2", value: res.p2 },
-					{ name: "CurrentPower_Total", value: res.p1 + res.p2 },
-					{ name: "EnergyToday_1", value: res.e1 },
-					{ name: "EnergyToday_2", value: res.e2 },
-					{ name: "EnergyToday_Total", value: res.e1 + res.e2 },
-					{ name: "EnergyLifetime_1", value: res.te1 },
-					{ name: "EnergyLifetime_2", value: res.te2 },
-					{ name: "EnergyLifetime_Total", value: res.te1 + res.te2 },
-				];
 
-				for (const element of numbers) {
-					if (!(await this.getStateAsync(`OutputData.${element.name}`))) {
+				// Parallelize state creation and setting - avoid repeated getStateAsync calls
+				const promises = ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
+					const stateId = `OutputData.${element.name}`;
+					if (!this.stateExists(stateId)) {
 						this.createState("OutputData", "", element.name,
 							{ type: "number", role: "value", read: true, write: false },
-							() => this.log.info(`state ${element.name} created`));
+							() => {
+								this.markStateCreated(stateId);
+								this.log.info(`state ${element.name} created`);
+							});
 					}
-					await this.setStateAsync(`OutputData.${element.name}`, { val: element.value, ack: true });
-				}
+					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+				});
+
+				await Promise.all(promises);
 			}
 		} catch (e) {
 			this.log.error(`setOutputDataStates failed: ${e}`);
@@ -171,22 +202,24 @@ class ApSystemsEz1 extends utils.Adapter {
 
 			if (alarmInfo !== undefined) {
 				const res = alarmInfo.data;
-				const numbers = [
-					{ name: "OffGrid", value: res.og },
-					{ name: "ShortCircuitError_1", value: res.isce1 },
-					{ name: "ShortCircuitError_2", value: res.isce2 },
-					{ name: "OutputFault", value: res.oe },
-				];
 
-				for (const element of numbers) {
-					if (!(await this.getStateAsync(`AlarmInfo.${element.name}`))) {
+				// Parallelize state creation and setting - avoid repeated getStateAsync calls
+				const promises = ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
+					const stateId = `AlarmInfo.${element.name}`;
+					if (!this.stateExists(stateId)) {
 						this.createState("AlarmInfo", "", element.name,
 							{ type: "string", role: "text", read: true, write: false },
-							() => this.log.info(`state ${element.name} created`));
+							() => {
+								this.markStateCreated(stateId);
+								this.log.info(`state ${element.name} created`);
+							});
 					}
-					const value = element.value === "0" ? "Normal" : "Alarm";
-					await this.setStateAsync(`AlarmInfo.${element.name}`, { val: value, ack: true });
-				}
+					const rawValue = element.value(res);
+					const value = rawValue === "0" ? "Normal" : "Alarm";
+					await this.setStateAsync(stateId, { val: value, ack: true });
+				});
+
+				await Promise.all(promises);
 			}
 		} catch (e) {
 			this.log.error(`setAlarmInfoStates failed: ${e}`);
@@ -200,13 +233,18 @@ class ApSystemsEz1 extends utils.Adapter {
 
 			if (onOffStatus !== undefined) {
 				const res = onOffStatus.data;
-				if (!(await this.getStateAsync("OnOffStatus.OnOffStatus"))) {
+				const stateId = "OnOffStatus.OnOffStatus";
+				// Only create state once if it doesn't exist - avoid repeated getStateAsync calls
+				if (!this.stateExists(stateId)) {
 					this.createState("OnOffStatus", "", "OnOffStatus",
 						{ type: "boolean", role: "switch", read: true, write: true },
-						() => this.log.info(`state OnOffStatus created`));
+						() => {
+							this.markStateCreated(stateId);
+							this.log.info(`state OnOffStatus created`);
+						});
 				}
 				const value = res.status === "0";
-				await this.setStateAsync(`OnOffStatus.OnOffStatus`, { val: value, ack: true });
+				await this.setStateAsync(stateId, { val: value, ack: true });
 			}
 		} catch (e) {
 			this.log.error(`setOnOffStatusState failed: ${e}`);
@@ -220,12 +258,17 @@ class ApSystemsEz1 extends utils.Adapter {
 
 			if (maxPower !== undefined) {
 				const res = maxPower.data;
-				if (!(await this.getStateAsync("MaxPower.MaxPower"))) {
+				const stateId = "MaxPower.MaxPower";
+				// Only create state once if it doesn't exist - avoid repeated getStateAsync calls
+				if (!this.stateExists(stateId)) {
 					this.createState("MaxPower", "", "MaxPower",
 						{ type: "number", role: "value.power", unit: "W", read: true, write: true },
-						() => this.log.info(`state MaxPower created`));
+						() => {
+							this.markStateCreated(stateId);
+							this.log.info(`state MaxPower created`);
+						});
 				}
-				await this.setStateAsync(`MaxPower.MaxPower`, { val: Number(res.maxPower), ack: true });
+				await this.setStateAsync(stateId, { val: Number(res.maxPower), ack: true });
 			}
 		} catch (e) {
 			this.log.error(`setMaxPowerState failed: ${e}`);
@@ -234,6 +277,29 @@ class ApSystemsEz1 extends utils.Adapter {
 
 	private async setConnected(connected: boolean): Promise<void> {
 		await this.setStateAsync("connected", { val: connected, ack: true });
+	}
+
+	/**
+	 * Cache to track which states have been created to avoid repeated getStateAsync calls.
+	 * This is populated during initialization and state creation callbacks.
+	 */
+	private readonly createdStates = new Set<string>();
+
+	/**
+	 * Check if a state has been created (without a database call).
+	 * @param stateId State ID relative to adapter namespace
+	 * @returns true if state was created by this adapter, false otherwise
+	 */
+	private stateExists(stateId: string): boolean {
+		return this.createdStates.has(stateId);
+	}
+
+	/**
+	 * Mark a state as created in the cache.
+	 * @param stateId State ID relative to adapter namespace
+	 */
+	private markStateCreated(stateId: string): void {
+		this.createdStates.add(stateId);
 	}
 
 	/**
