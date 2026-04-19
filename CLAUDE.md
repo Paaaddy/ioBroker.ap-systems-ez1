@@ -37,9 +37,17 @@ Adapter config fields (`ipAddress`, `port`, `pollIntervalInSeconds`, `ignoreConn
 - **Runtime schema / admin UI:** `admin/jsonConfig.json` (`adminUI.config: json`), with labels localized in `admin/i18n/<lang>/translations.json`.
 - **TypeScript type:** `src/lib/adapter-config.d.ts` augments `ioBroker.AdapterConfig` globally. Adding a config field requires updating both files plus the `native` defaults in `io-package.json`.
 
+### Timer architecture
+
+Two separate intervals drive polling:
+
+- **`this.timer`** — fires every `pollIntervalInSeconds` (configurable). Calls `setOutputDataStates`, `setAlarmInfoStates`, `setOnOffStatusState`.
+- **`this.slowTimer`** — fires every 1 hour (`SLOW_POLL_INTERVAL_MS = 3_600_000`). Calls `setDeviceInfoStates`, `setMaxPowerState`. Both also run once immediately on `onReady`.
+
+Both handles are stored on `this` and cleared in `onUnload`.
+
 ### Known rough edges to be aware of when editing `main.ts`
 
-- `onUnload` does **not** `clearInterval` the poll timer — the `clearInterval(interval1)` line is still commented out from the template. The polling interval handle is not stored on `this`. If you add work here or change the timer, store the handle and clear it.
 - `setDeviceInfoStates` / `setOutputDataStates` / etc. call `this.getStateAsync(element.name)` with the bare name (e.g. `"MaxPower"`) instead of the full path (e.g. `"DeviceInfo.MaxPower"`). This means the existence check effectively always returns falsy and `createState` is invoked on every poll. Preserve or fix this deliberately — do not "clean up" silently.
 - The adapter-level `handleClientError` on `ApSystemsEz1` is dead code; errors are handled inside the client.
 
