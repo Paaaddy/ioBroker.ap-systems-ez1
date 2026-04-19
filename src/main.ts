@@ -148,6 +148,11 @@ class ApSystemsEz1 extends utils.Adapter {
 				});
 
 				const numberPromises = ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
+					const value = element.value(res);
+					if (!Number.isFinite(value)) {
+						this.log.error(`Invalid device limit for ${element.name}: ${value}`);
+						return;
+					}
 					const stateId = `DeviceInfo.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
@@ -155,7 +160,7 @@ class ApSystemsEz1 extends utils.Adapter {
 							{ type: "number", role: "value", read: true, write: false },
 							() => { this.log.info(`state ${element.name} created`); });
 					}
-					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+					await this.setStateAsync(stateId, { val: value, ack: true });
 				});
 
 				await Promise.all([...stringPromises, ...numberPromises]);
@@ -177,6 +182,11 @@ class ApSystemsEz1 extends utils.Adapter {
 				const res = outputData.data;
 
 				const promises = ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
+					const value = element.value(res);
+					if (!Number.isFinite(value)) {
+						this.log.error(`Invalid output data for ${element.name}: ${value}`);
+						return;
+					}
 					const stateId = `OutputData.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
@@ -184,7 +194,7 @@ class ApSystemsEz1 extends utils.Adapter {
 							{ type: "number", role: element.role, unit: element.unit, read: true, write: false },
 							() => { this.log.info(`state ${element.name} created`); });
 					}
-					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+					await this.setStateAsync(stateId, { val: value, ack: true });
 				});
 
 				await Promise.all(promises);
@@ -353,6 +363,7 @@ class ApSystemsEz1 extends utils.Adapter {
 		const confirmed = await this.apiClient.getOnOffStatus();
 		if (!confirmed) {
 			this.log.error(`OnOff command sent but could not verify device state`);
+			await this.setConnected(false);
 			return;
 		}
 		const expected = on ? "0" : "1";
@@ -396,6 +407,7 @@ class ApSystemsEz1 extends utils.Adapter {
 		const confirmed = await this.apiClient.getMaxPower();
 		if (!confirmed) {
 			this.log.error(`MaxPower command sent but could not verify device state`);
+			await this.setConnected(false);
 			return;
 		}
 		const actual = Number(confirmed.data.maxPower);
