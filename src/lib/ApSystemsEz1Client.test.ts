@@ -199,6 +199,34 @@ describe("ApSystemsEz1Client", () => {
 		});
 	});
 
+	// ── write commands: no retry ──────────────────────────────────────────────
+
+	describe("write commands do not retry on failure", () => {
+		it("setOnOffStatus makes exactly 1 attempt on network error", async () => {
+			axiosGetStub.rejects(new Error("ECONNREFUSED"));
+
+			await client.setOnOffStatus(true);
+
+			expect(axiosGetStub.callCount).to.equal(1);
+		});
+
+		it("setMaxPower makes exactly 1 attempt on network error", async () => {
+			axiosGetStub.rejects(new Error("ECONNREFUSED"));
+
+			await client.setMaxPower(400);
+
+			expect(axiosGetStub.callCount).to.equal(1);
+		});
+
+		it("setMaxPower rounds float to integer in URL", async () => {
+			axiosGetStub.resolves(axiosOk(dto<ReturnMaxPower>({ maxPower: "400" })));
+
+			await client.setMaxPower(399.7);
+
+			expect(axiosGetStub.firstCall.args[0]).to.include("p=400");
+		});
+	});
+
 	// ── error handling ────────────────────────────────────────────────────────
 
 	describe("error handling", () => {

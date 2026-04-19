@@ -3,6 +3,7 @@
  */
 
 import * as utils from "@iobroker/adapter-core";
+import net from "net";
 import { ApSystemsEz1Client } from "./lib/ApSystemsEz1Client";
 
 class ApSystemsEz1 extends utils.Adapter {
@@ -12,6 +13,9 @@ class ApSystemsEz1 extends utils.Adapter {
 	private timer: NodeJS.Timeout | undefined;
 	private slowTimer: NodeJS.Timeout | undefined;
 	private static readonly SLOW_POLL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+	// Serializes write commands — prevents concurrent device commands from racing
+	private writeQueue: Promise<void> = Promise.resolve();
 
 	// State mappings cached to avoid object allocation on every poll cycle
 	private static readonly DEVICE_INFO_STRINGS = [
@@ -27,22 +31,22 @@ class ApSystemsEz1 extends utils.Adapter {
 	];
 
 	private static readonly OUTPUT_DATA_NUMBERS = [
-		{ name: "CurrentPower_1", value: (res: any) => res.p1 },
-		{ name: "CurrentPower_2", value: (res: any) => res.p2 },
-		{ name: "CurrentPower_Total", value: (res: any) => res.p1 + res.p2 },
-		{ name: "EnergyToday_1", value: (res: any) => res.e1 },
-		{ name: "EnergyToday_2", value: (res: any) => res.e2 },
-		{ name: "EnergyToday_Total", value: (res: any) => res.e1 + res.e2 },
-		{ name: "EnergyLifetime_1", value: (res: any) => res.te1 },
-		{ name: "EnergyLifetime_2", value: (res: any) => res.te2 },
-		{ name: "EnergyLifetime_Total", value: (res: any) => res.te1 + res.te2 },
+		{ name: "CurrentPower_1",      role: "value.power",  unit: "W",   value: (res: any) => res.p1 },
+		{ name: "CurrentPower_2",      role: "value.power",  unit: "W",   value: (res: any) => res.p2 },
+		{ name: "CurrentPower_Total",  role: "value.power",  unit: "W",   value: (res: any) => res.p1 + res.p2 },
+		{ name: "EnergyToday_1",       role: "value.energy", unit: "kWh", value: (res: any) => res.e1 },
+		{ name: "EnergyToday_2",       role: "value.energy", unit: "kWh", value: (res: any) => res.e2 },
+		{ name: "EnergyToday_Total",   role: "value.energy", unit: "kWh", value: (res: any) => res.e1 + res.e2 },
+		{ name: "EnergyLifetime_1",    role: "value.energy", unit: "kWh", value: (res: any) => res.te1 },
+		{ name: "EnergyLifetime_2",    role: "value.energy", unit: "kWh", value: (res: any) => res.te2 },
+		{ name: "EnergyLifetime_Total",role: "value.energy", unit: "kWh", value: (res: any) => res.te1 + res.te2 },
 	];
 
 	private static readonly ALARM_INFO_NUMBERS = [
-		{ name: "OffGrid", value: (res: any) => res.og },
+		{ name: "OffGrid",           value: (res: any) => res.og },
 		{ name: "ShortCircuitError_1", value: (res: any) => res.isce1 },
 		{ name: "ShortCircuitError_2", value: (res: any) => res.isce2 },
-		{ name: "OutputFault", value: (res: any) => res.oe },
+		{ name: "OutputFault",       value: (res: any) => res.oe },
 	];
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
@@ -66,11 +70,10 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.log.debug("config pollIntervalInSeconds: " + this.config.pollIntervalInSeconds);
 		this.log.debug("config ignoreConnectionErrorMessages: " + this.config.ignoreConnectionErrorMessages);
 
-		const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
 		const port = Number(this.config?.port);
 		const pollInterval = Number(this.config?.pollIntervalInSeconds);
 
-		if (!this.config?.ipAddress || !ipv4Pattern.test(this.config.ipAddress)) {
+		if (!this.config?.ipAddress || !net.isIPv4(this.config.ipAddress)) {
 			this.log.error("Invalid IP address in config. Must be a valid IPv4 address.");
 			return;
 		}
@@ -100,6 +103,15 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.markStateCreated("connected");
 		await this.setStateAsync("connected", { val: false, ack: true });
 
+		// Await initial polls so device limits are loaded before accepting writes
+		await Promise.all([
+			this.setDeviceInfoStates(),
+			this.setMaxPowerState(),
+			this.setOutputDataStates(),
+			this.setAlarmInfoStates(),
+			this.setOnOffStatusState(),
+		]);
+
 		this.slowTimer = setInterval(() => {
 			void this.setDeviceInfoStates();
 			void this.setMaxPowerState();
@@ -110,12 +122,6 @@ class ApSystemsEz1 extends utils.Adapter {
 			void this.setAlarmInfoStates();
 			void this.setOnOffStatusState();
 		}, this.pollIntervalInMilliSeconds);
-
-		void this.setDeviceInfoStates();
-		void this.setMaxPowerState();
-		void this.setOutputDataStates();
-		void this.setAlarmInfoStates();
-		void this.setOnOffStatusState();
 
 		this.subscribeStates("OnOffStatus.OnOffStatus");
 		this.subscribeStates("MaxPower.MaxPower");
@@ -130,31 +136,24 @@ class ApSystemsEz1 extends utils.Adapter {
 				await this.setConnected(true);
 				const res = deviceInfo.data;
 
-				// Parallelize state creation and setting for both strings and numbers
 				const stringPromises = ApSystemsEz1.DEVICE_INFO_STRINGS.map(async (element) => {
 					const stateId = `DeviceInfo.${element.name}`;
-					// Only create state once if it doesn't exist, avoid repeated getStateAsync calls
 					if (!this.stateExists(stateId)) {
+						this.markStateCreated(stateId);
 						this.createState("DeviceInfo", "", element.name,
 							{ type: "string", role: "text", read: true, write: false },
-							() => {
-								this.markStateCreated(stateId);
-								this.log.info(`state ${element.name} created`);
-							});
+							() => { this.log.info(`state ${element.name} created`); });
 					}
 					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
 				});
 
 				const numberPromises = ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
 					const stateId = `DeviceInfo.${element.name}`;
-					// Only create state once if it doesn't exist, avoid repeated getStateAsync calls
 					if (!this.stateExists(stateId)) {
+						this.markStateCreated(stateId);
 						this.createState("DeviceInfo", "", element.name,
 							{ type: "number", role: "value", read: true, write: false },
-							() => {
-								this.markStateCreated(stateId);
-								this.log.info(`state ${element.name} created`);
-							});
+							() => { this.log.info(`state ${element.name} created`); });
 					}
 					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
 				});
@@ -177,24 +176,24 @@ class ApSystemsEz1 extends utils.Adapter {
 			if (outputData !== undefined) {
 				const res = outputData.data;
 
-				// Parallelize state creation and setting - avoid repeated getStateAsync calls
 				const promises = ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
 					const stateId = `OutputData.${element.name}`;
 					if (!this.stateExists(stateId)) {
+						this.markStateCreated(stateId);
 						this.createState("OutputData", "", element.name,
-							{ type: "number", role: "value", read: true, write: false },
-							() => {
-								this.markStateCreated(stateId);
-								this.log.info(`state ${element.name} created`);
-							});
+							{ type: "number", role: element.role, unit: element.unit, read: true, write: false },
+							() => { this.log.info(`state ${element.name} created`); });
 					}
 					await this.setStateAsync(stateId, { val: element.value(res), ack: true });
 				});
 
 				await Promise.all(promises);
+			} else {
+				await this.setConnected(false);
 			}
 		} catch (e) {
 			this.log.error(`setOutputDataStates failed: ${e}`);
+			await this.setConnected(false);
 		}
 	}
 
@@ -206,26 +205,30 @@ class ApSystemsEz1 extends utils.Adapter {
 			if (alarmInfo !== undefined) {
 				const res = alarmInfo.data;
 
-				// Parallelize state creation and setting - avoid repeated getStateAsync calls
 				const promises = ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
 					const stateId = `AlarmInfo.${element.name}`;
 					if (!this.stateExists(stateId)) {
+						this.markStateCreated(stateId);
 						this.createState("AlarmInfo", "", element.name,
 							{ type: "string", role: "text", read: true, write: false },
-							() => {
-								this.markStateCreated(stateId);
-								this.log.info(`state ${element.name} created`);
-							});
+							() => { this.log.info(`state ${element.name} created`); });
 					}
 					const rawValue = element.value(res);
+					if (rawValue !== "0" && rawValue !== "1") {
+						this.log.error(`Unexpected alarm value for ${element.name}: ${rawValue}`);
+						return;
+					}
 					const value = rawValue === "0" ? "Normal" : "Alarm";
 					await this.setStateAsync(stateId, { val: value, ack: true });
 				});
 
 				await Promise.all(promises);
+			} else {
+				await this.setConnected(false);
 			}
 		} catch (e) {
 			this.log.error(`setAlarmInfoStates failed: ${e}`);
+			await this.setConnected(false);
 		}
 	}
 
@@ -237,20 +240,24 @@ class ApSystemsEz1 extends utils.Adapter {
 			if (onOffStatus !== undefined) {
 				const res = onOffStatus.data;
 				const stateId = "OnOffStatus.OnOffStatus";
-				// Only create state once if it doesn't exist - avoid repeated getStateAsync calls
 				if (!this.stateExists(stateId)) {
+					this.markStateCreated(stateId);
 					this.createState("OnOffStatus", "", "OnOffStatus",
 						{ type: "boolean", role: "switch", read: true, write: true },
-						() => {
-							this.markStateCreated(stateId);
-							this.log.info(`state OnOffStatus created`);
-						});
+						() => { this.log.info(`state OnOffStatus created`); });
+				}
+				if (res.status !== "0" && res.status !== "1") {
+					this.log.error(`Unexpected OnOffStatus from device: ${res.status}`);
+					return;
 				}
 				const value = res.status === "0";
 				await this.setStateAsync(stateId, { val: value, ack: true });
+			} else {
+				await this.setConnected(false);
 			}
 		} catch (e) {
 			this.log.error(`setOnOffStatusState failed: ${e}`);
+			await this.setConnected(false);
 		}
 	}
 
@@ -261,20 +268,25 @@ class ApSystemsEz1 extends utils.Adapter {
 
 			if (maxPower !== undefined) {
 				const res = maxPower.data;
+				const powerValue = Number(res.maxPower);
+				if (!Number.isFinite(powerValue)) {
+					this.log.error(`Invalid maxPower from device: ${res.maxPower}`);
+					return;
+				}
 				const stateId = "MaxPower.MaxPower";
-				// Only create state once if it doesn't exist - avoid repeated getStateAsync calls
 				if (!this.stateExists(stateId)) {
+					this.markStateCreated(stateId);
 					this.createState("MaxPower", "", "MaxPower",
 						{ type: "number", role: "value.power", unit: "W", read: true, write: true },
-						() => {
-							this.markStateCreated(stateId);
-							this.log.info(`state MaxPower created`);
-						});
+						() => { this.log.info(`state MaxPower created`); });
 				}
-				await this.setStateAsync(stateId, { val: Number(res.maxPower), ack: true });
+				await this.setStateAsync(stateId, { val: powerValue, ack: true });
+			} else {
+				await this.setConnected(false);
 			}
 		} catch (e) {
 			this.log.error(`setMaxPowerState failed: ${e}`);
+			await this.setConnected(false);
 		}
 	}
 
@@ -284,23 +296,13 @@ class ApSystemsEz1 extends utils.Adapter {
 
 	/**
 	 * Cache to track which states have been created to avoid repeated getStateAsync calls.
-	 * This is populated during initialization and state creation callbacks.
 	 */
 	private readonly createdStates = new Set<string>();
 
-	/**
-	 * Check if a state has been created (without a database call).
-	 * @param stateId State ID relative to adapter namespace
-	 * @returns true if state was created by this adapter, false otherwise
-	 */
 	private stateExists(stateId: string): boolean {
 		return this.createdStates.has(stateId);
 	}
 
-	/**
-	 * Mark a state as created in the cache.
-	 * @param stateId State ID relative to adapter namespace
-	 */
 	private markStateCreated(stateId: string): void {
 		this.createdStates.add(stateId);
 	}
@@ -318,21 +320,6 @@ class ApSystemsEz1 extends utils.Adapter {
 		}
 	}
 
-	// If you need to react to object changes, uncomment the following block and the corresponding line in the constructor.
-	// You also need to subscribe to the objects with `this.subscribeObjects`, similar to `this.subscribeStates`.
-	// /**
-	//  * Is called if a subscribed object changes
-	//  */
-	// private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
-	// 	if (obj) {
-	// 		// The object was changed
-	// 		this.log.info(`object ${id} changed: ${JSON.stringify(obj)}`);
-	// 	} else {
-	// 		// The object was deleted
-	// 		this.log.info(`object ${id} deleted`);
-	// 	}
-	// }
-
 	private onStateChange(id: string, state: ioBroker.State | null | undefined): void {
 		if (!state || state.ack) {
 			return;
@@ -342,16 +329,40 @@ class ApSystemsEz1 extends utils.Adapter {
 				this.log.error(`OnOffStatus: expected boolean, got ${typeof state.val}`);
 				return;
 			}
-			this.apiClient.setOnOffStatus(state.val)
-				.then(() => this.log.info(`OnOff set to ${state.val}`))
-				.catch((e) => this.log.error(`Failed to set OnOff: ${e}`));
+			const target = state.val;
+			this.writeQueue = this.writeQueue
+				.then(() => this.applyOnOffStatus(target))
+				.catch(() => { /* errors logged inside */ });
 		} else if (id.endsWith(".MaxPower.MaxPower")) {
 			if (typeof state.val !== "number") {
 				this.log.error(`MaxPower: expected number, got ${typeof state.val}`);
 				return;
 			}
-			void this.validateAndSetMaxPower(state.val);
+			const watts = state.val;
+			this.writeQueue = this.writeQueue
+				.then(() => this.validateAndSetMaxPower(watts))
+				.catch(() => { /* errors logged inside */ });
 		}
+	}
+
+	private async applyOnOffStatus(on: boolean): Promise<void> {
+		await this.apiClient.setOnOffStatus(on);
+
+		// Verify device applied the command; revert local state to device reality on mismatch
+		await new Promise(r => setTimeout(r, 500));
+		const confirmed = await this.apiClient.getOnOffStatus();
+		if (!confirmed) {
+			this.log.error(`OnOff command sent but could not verify device state`);
+			return;
+		}
+		const expected = on ? "0" : "1";
+		if (confirmed.data.status !== expected) {
+			this.log.error(`OnOff verification failed: sent ${on}, device reports status=${confirmed.data.status}`);
+			const actual = confirmed.data.status === "0";
+			await this.setStateAsync("OnOffStatus.OnOffStatus", { val: actual, ack: true });
+			return;
+		}
+		this.log.info(`OnOff set to ${on}`);
 	}
 
 	private async validateAndSetMaxPower(watts: number): Promise<void> {
@@ -378,10 +389,40 @@ class ApSystemsEz1 extends utils.Adapter {
 			return;
 		}
 
-		this.apiClient.setMaxPower(watts)
-			.then(() => this.log.info(`MaxPower set to ${watts}W`))
-			.catch((e) => this.log.error(`Failed to set MaxPower: ${e}`));
+		await this.apiClient.setMaxPower(watts);
+
+		// Verify device applied the command; revert local state to device reality on mismatch
+		await new Promise(r => setTimeout(r, 500));
+		const confirmed = await this.apiClient.getMaxPower();
+		if (!confirmed) {
+			this.log.error(`MaxPower command sent but could not verify device state`);
+			return;
+		}
+		const actual = Number(confirmed.data.maxPower);
+		if (!Number.isFinite(actual) || actual !== watts) {
+			this.log.error(`MaxPower verification failed: sent ${watts}W, device reports ${confirmed.data.maxPower}W`);
+			if (Number.isFinite(actual)) {
+				await this.setStateAsync("MaxPower.MaxPower", { val: actual, ack: true });
+			}
+			return;
+		}
+		this.log.info(`MaxPower set to ${watts}W`);
 	}
+
+	// If you need to react to object changes, uncomment the following block and the corresponding line in the constructor.
+	// You also need to subscribe to the objects with `this.subscribeObjects`, similar to `this.subscribeStates`.
+	// /**
+	//  * Is called if a subscribed object changes
+	//  */
+	// private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
+	// 	if (obj) {
+	// 		// The object was changed
+	// 		this.log.info(`object ${id} changed: ${JSON.stringify(obj)}`);
+	// 	} else {
+	// 		// The object was deleted
+	// 		this.log.info(`object ${id} deleted`);
+	// 	}
+	// }
 
 	// If you need to accept messages in your adapter, uncomment the following block and the corresponding line in the constructor.
 	// /**

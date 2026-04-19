@@ -24,11 +24,14 @@ export class ApSystemsEz1Client {
 			keepAlive: true,
 			maxSockets: 1,
 			keepAliveMsecs: 1000,
+			// Close idle sockets so stale keep-alive connections don't hang after device reboot
+			timeout: 10000,
 		});
 
 		this.axiosInstance = axios.create({ httpAgent, timeout: 5000 });
 	}
 
+	// Read endpoints: retry on transient network failure (idempotent)
 	private async getRequest<TResult>(endpoint: string, attempt = 0): Promise<TResult | undefined> {
 		try {
 			const url = `${this.baseUrl}/${endpoint}`;
@@ -54,6 +57,27 @@ export class ApSystemsEz1Client {
 		}
 	}
 
+	// Write endpoints: fail-fast, no retries — device may apply command before response times out
+	private async setRequest<TResult>(endpoint: string): Promise<TResult | undefined> {
+		try {
+			const url = `${this.baseUrl}/${endpoint}`;
+			const response: AxiosResponse = await this.axiosInstance.get(url);
+
+			if (this.log.level === "debug") {
+				this.log.debug(`Response from ${endpoint}: ${JSON.stringify(response.data)}`);
+			}
+
+			if (response.status !== 200) {
+				this.handleClientError(response.statusText);
+				return undefined;
+			}
+
+			return response.data as TResult;
+		} catch (error) {
+			await this.handleClientError(error);
+		}
+	}
+
 	public async getDeviceInfo(): Promise<TypedReturnDto<ReturnDeviceInfo> | undefined> {
 		return this.getRequest<TypedReturnDto<ReturnDeviceInfo>>("getDeviceInfo");
 	}
@@ -75,13 +99,13 @@ export class ApSystemsEz1Client {
 	}
 
 	public async setMaxPower(watts: number): Promise<TypedReturnDto<ReturnMaxPower> | undefined> {
-		const params = new URLSearchParams({ p: String(watts) });
-		return this.getRequest<TypedReturnDto<ReturnMaxPower>>(`setMaxPower?${params}`);
+		const params = new URLSearchParams({ p: String(Math.round(watts)) });
+		return this.setRequest<TypedReturnDto<ReturnMaxPower>>(`setMaxPower?${params}`);
 	}
 
 	public async setOnOffStatus(on: boolean): Promise<TypedReturnDto<ReturnOnOffStatus> | undefined> {
 		const params = new URLSearchParams({ status: on ? "0" : "1" });
-		return this.getRequest<TypedReturnDto<ReturnOnOffStatus>>(`setOnOff?${params}`);
+		return this.setRequest<TypedReturnDto<ReturnOnOffStatus>>(`setOnOff?${params}`);
 	}
 
 	private async handleClientError(error: unknown): Promise<void> {
