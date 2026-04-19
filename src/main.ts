@@ -38,17 +38,29 @@ class ApSystemsEz1 extends utils.Adapter {
 
 		// The adapters config (in the instance object everything under the attribute "native") is accessible via
 		// this.config:
-		this.log.info("config ipAddress: " + this.config.ipAddress);
-		this.log.info("config port: " + this.config.port);
-		this.log.info("config pollIntervalInSeconds: " + this.config.pollIntervalInSeconds);
-		this.log.info("config ignoreConnectionErrorMessages: " + this.config.ignoreConnectionErrorMessages);
+		this.log.debug("config ipAddress: " + this.config.ipAddress);
+		this.log.debug("config port: " + this.config.port);
+		this.log.debug("config pollIntervalInSeconds: " + this.config.pollIntervalInSeconds);
+		this.log.debug("config ignoreConnectionErrorMessages: " + this.config.ignoreConnectionErrorMessages);
 
-		if (!this.config?.ipAddress || !this.config?.port || !this.config?.pollIntervalInSeconds) {
-			this.log.error("Can not start with invalid config. Please open config.");
+		const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+		const port = Number(this.config?.port);
+		const pollInterval = Number(this.config?.pollIntervalInSeconds);
+
+		if (!this.config?.ipAddress || !ipv4Pattern.test(this.config.ipAddress)) {
+			this.log.error("Invalid IP address in config. Must be a valid IPv4 address.");
+			return;
+		}
+		if (!Number.isInteger(port) || port < 1 || port > 65535) {
+			this.log.error("Invalid port in config. Must be an integer between 1 and 65535.");
+			return;
+		}
+		if (!Number.isFinite(pollInterval) || pollInterval < 1) {
+			this.log.error("Invalid pollIntervalInSeconds in config. Must be a positive number.");
 			return;
 		}
 
-		this.pollIntervalInMilliSeconds = this.config.pollIntervalInSeconds * 1000;
+		this.pollIntervalInMilliSeconds = pollInterval * 1000;
 		this.apiClient = new ApSystemsEz1Client(this.log, this.config.ipAddress, this.config.port, this.config?.ignoreConnectionErrorMessages);
 
 		await this.extendObjectAsync("connected", {
@@ -308,16 +320,25 @@ class ApSystemsEz1 extends utils.Adapter {
 	}
 
 	private async validateAndSetMaxPower(watts: number): Promise<void> {
+		if (!Number.isFinite(watts)) {
+			this.log.error(`MaxPower rejected: value ${watts} is not a finite number`);
+			return;
+		}
+
 		const minState = await this.getStateAsync("DeviceInfo.MinPower");
 		const maxState = await this.getStateAsync("DeviceInfo.MaxPower");
-		const min = typeof minState?.val === "number" ? minState.val : null;
-		const max = typeof maxState?.val === "number" ? maxState.val : null;
+		const min = typeof minState?.val === "number" && Number.isFinite(minState.val) ? minState.val : null;
+		const max = typeof maxState?.val === "number" && Number.isFinite(maxState.val) ? maxState.val : null;
 
-		if (min !== null && watts < min) {
+		if (min === null || max === null) {
+			this.log.error(`MaxPower ${watts}W rejected: device power limits not yet loaded. Wait for first poll to complete.`);
+			return;
+		}
+		if (watts < min) {
 			this.log.error(`MaxPower ${watts}W rejected: below device minimum ${min}W`);
 			return;
 		}
-		if (max !== null && watts > max) {
+		if (watts > max) {
 			this.log.error(`MaxPower ${watts}W rejected: above device maximum ${max}W`);
 			return;
 		}

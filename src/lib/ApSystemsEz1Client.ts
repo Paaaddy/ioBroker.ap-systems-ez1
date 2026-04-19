@@ -125,10 +125,10 @@ export class ApSystemsEz1Client {
 	}
 
 	private async handleClientError(error: unknown): Promise<void> {
-	    if (this.ignoreConnectionErrorMessages) {
+		if (this.ignoreConnectionErrorMessages) {
 			return;
 		} else if (error instanceof Error) {
-			this.log.error(`Unknown error: ${error}. Stack: ${error.stack}`)
+			this.log.error(`Unknown error: ${error.message}`)
 		} else {
 			this.log.error(`Unknown error: ${error}`)
 		}

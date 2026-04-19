@@ -8,13 +8,16 @@
 			"newLine": true
 		},
 		"port": {
-			"type": "text",
+			"type": "number",
 			"label": "port",
+			"min": 1,
+			"max": 65535,
 			"newLine": true
 		},
 		"pollIntervalInSeconds": {
 			"type": "number",
 			"label": "pollIntervalInSeconds",
+			"min": 1,
 			"newLine": true
 		},
 		"ignoreConnectionErrorMessages": {
