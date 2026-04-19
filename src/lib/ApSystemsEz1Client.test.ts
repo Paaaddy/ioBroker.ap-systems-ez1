@@ -177,6 +177,28 @@ describe("ApSystemsEz1Client", () => {
 		});
 	});
 
+	// ── debug logging ─────────────────────────────────────────────────────────
+
+	describe("debug logging", () => {
+		it("calls log.debug when log level is debug", async () => {
+			const debugLogger = { ...makeLogger(), level: "debug" } as unknown as ioBroker.Logger;
+			const debugClient = new ApSystemsEz1Client(debugLogger, "192.168.1.100", 8050);
+			axiosGetStub.resolves(axiosOk(dto<ReturnMaxPower>({ maxPower: "800" })));
+
+			await debugClient.getMaxPower();
+
+			expect((debugLogger.debug as sinon.SinonStub)).to.have.been.called;
+		});
+
+		it("does NOT call log.debug when log level is info", async () => {
+			axiosGetStub.resolves(axiosOk(dto<ReturnMaxPower>({ maxPower: "800" })));
+
+			await client.getMaxPower();
+
+			expect((logger.debug as sinon.SinonStub)).to.not.have.been.called;
+		});
+	});
+
 	// ── error handling ────────────────────────────────────────────────────────
 
 	describe("error handling", () => {
