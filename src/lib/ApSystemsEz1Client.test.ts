@@ -20,6 +20,7 @@ function makeLogger(): ioBroker.Logger {
 		error: sinon.stub(),
 		debug: sinon.stub(),
 		silly: sinon.stub(),
+		level: "info",
 	} as unknown as ioBroker.Logger;
 }
 
@@ -28,12 +29,14 @@ function axiosOk<T>(data: T): Promise<{ status: number; data: T }> {
 }
 
 describe("ApSystemsEz1Client", () => {
-	let getStub: sinon.SinonStub;
+	let axiosGetStub: sinon.SinonStub;
+	let axiosCreateStub: sinon.SinonStub;
 	let logger: ioBroker.Logger;
 	let client: ApSystemsEz1Client;
 
 	beforeEach(() => {
-		getStub = sinon.stub(axios, "get");
+		axiosGetStub = sinon.stub();
+		axiosCreateStub = sinon.stub(axios, "create").returns({ get: axiosGetStub } as any);
 		logger = makeLogger();
 		client = new ApSystemsEz1Client(logger, "192.168.1.100", 8050);
 	});
@@ -44,15 +47,15 @@ describe("ApSystemsEz1Client", () => {
 
 	// ── URL construction ──────────────────────────────────────────────────────
 
-	it("uses correct base URL and passes timeout 5000", async () => {
-		getStub.returns(axiosOk(dto<ReturnDeviceInfo>({
+	it("uses correct base URL and configures timeout 5000", async () => {
+		axiosGetStub.resolves(axiosOk(dto<ReturnDeviceInfo>({
 			deviceId: "X", devVer: "1", ssid: "net", ipAddr: "192.168.1.100", minPower: 30, maxPower: 800,
 		})));
 
 		await client.getDeviceInfo();
 
-		expect(getStub.firstCall.args[0]).to.equal("http://192.168.1.100:8050/getDeviceInfo");
-		expect(getStub.firstCall.args[1]).to.deep.include({ timeout: 5000 });
+		expect(axiosGetStub.firstCall.args[0]).to.equal("http://192.168.1.100:8050/getDeviceInfo");
+		expect(axiosCreateStub.firstCall.args[0]).to.deep.include({ timeout: 5000 });
 	});
 
 	// ── getDeviceInfo ─────────────────────────────────────────────────────────
@@ -63,7 +66,7 @@ describe("ApSystemsEz1Client", () => {
 				deviceId: "ABC123", devVer: "1.0.0", ssid: "MyNet",
 				ipAddr: "192.168.1.100", minPower: 30, maxPower: 800,
 			};
-			getStub.returns(axiosOk(dto(data)));
+			axiosGetStub.resolves(axiosOk(dto(data)));
 
 			const result = await client.getDeviceInfo();
 
@@ -78,7 +81,7 @@ describe("ApSystemsEz1Client", () => {
 	describe("getOutputData", () => {
 		it("returns all power and energy fields", async () => {
 			const data: ReturnOutputData = { p1: 120, p2: 80, e1: 0.5, e2: 0.3, te1: 10.1, te2: 8.4 };
-			getStub.returns(axiosOk(dto(data)));
+			axiosGetStub.resolves(axiosOk(dto(data)));
 
 			const result = await client.getOutputData();
 
@@ -92,27 +95,27 @@ describe("ApSystemsEz1Client", () => {
 
 	describe("setOnOffStatus", () => {
 		it("sends status=0 when turning ON (true → 0)", async () => {
-			getStub.returns(axiosOk(dto<ReturnOnOffStatus>({ status: "0" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnOnOffStatus>({ status: "0" })));
 
 			await client.setOnOffStatus(true);
 
-			expect(getStub.firstCall.args[0]).to.include("setOnOff?status=0");
+			expect(axiosGetStub.firstCall.args[0]).to.include("setOnOff?status=0");
 		});
 
 		it("sends status=1 when turning OFF (false → 1)", async () => {
-			getStub.returns(axiosOk(dto<ReturnOnOffStatus>({ status: "1" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnOnOffStatus>({ status: "1" })));
 
 			await client.setOnOffStatus(false);
 
-			expect(getStub.firstCall.args[0]).to.include("setOnOff?status=1");
+			expect(axiosGetStub.firstCall.args[0]).to.include("setOnOff?status=1");
 		});
 
 		it("does NOT send status=1 when turning ON", async () => {
-			getStub.returns(axiosOk(dto<ReturnOnOffStatus>({ status: "0" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnOnOffStatus>({ status: "0" })));
 
 			await client.setOnOffStatus(true);
 
-			expect(getStub.firstCall.args[0]).to.not.include("status=1");
+			expect(axiosGetStub.firstCall.args[0]).to.not.include("status=1");
 		});
 	});
 
@@ -120,19 +123,19 @@ describe("ApSystemsEz1Client", () => {
 
 	describe("setMaxPower", () => {
 		it("encodes watt value correctly in URL", async () => {
-			getStub.returns(axiosOk(dto<ReturnMaxPower>({ maxPower: "800" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnMaxPower>({ maxPower: "800" })));
 
 			await client.setMaxPower(800);
 
-			expect(getStub.firstCall.args[0]).to.include("setMaxPower?p=800");
+			expect(axiosGetStub.firstCall.args[0]).to.include("setMaxPower?p=800");
 		});
 
 		it("encodes minimum power value", async () => {
-			getStub.returns(axiosOk(dto<ReturnMaxPower>({ maxPower: "30" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnMaxPower>({ maxPower: "30" })));
 
 			await client.setMaxPower(30);
 
-			expect(getStub.firstCall.args[0]).to.include("setMaxPower?p=30");
+			expect(axiosGetStub.firstCall.args[0]).to.include("setMaxPower?p=30");
 		});
 	});
 
@@ -140,7 +143,7 @@ describe("ApSystemsEz1Client", () => {
 
 	describe("getOnOffStatus", () => {
 		it("returns on/off status from device", async () => {
-			getStub.returns(axiosOk(dto<ReturnOnOffStatus>({ status: "0" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnOnOffStatus>({ status: "0" })));
 
 			const result = await client.getOnOffStatus();
 
@@ -152,7 +155,7 @@ describe("ApSystemsEz1Client", () => {
 
 	describe("getMaxPower", () => {
 		it("returns current max power cap", async () => {
-			getStub.returns(axiosOk(dto<ReturnMaxPower>({ maxPower: "600" })));
+			axiosGetStub.resolves(axiosOk(dto<ReturnMaxPower>({ maxPower: "600" })));
 
 			const result = await client.getMaxPower();
 
@@ -165,7 +168,7 @@ describe("ApSystemsEz1Client", () => {
 	describe("getAlarmInfo", () => {
 		it("returns all alarm fields", async () => {
 			const data: ReturnAlarmInfo = { og: "0", isce1: "0", isce2: "1", oe: "0" };
-			getStub.returns(axiosOk(dto(data)));
+			axiosGetStub.resolves(axiosOk(dto(data)));
 
 			const result = await client.getAlarmInfo();
 
@@ -178,7 +181,7 @@ describe("ApSystemsEz1Client", () => {
 
 	describe("error handling", () => {
 		it("logs error on network failure when ignoreConnectionErrorMessages=false", async () => {
-			getStub.rejects(new Error("ECONNREFUSED"));
+			axiosGetStub.rejects(new Error("ECONNREFUSED"));
 
 			await client.getDeviceInfo();
 
@@ -187,7 +190,7 @@ describe("ApSystemsEz1Client", () => {
 
 		it("does NOT log error when ignoreConnectionErrorMessages=true", async () => {
 			const silentClient = new ApSystemsEz1Client(logger, "192.168.1.100", 8050, true);
-			getStub.rejects(new Error("ECONNREFUSED"));
+			axiosGetStub.rejects(new Error("ECONNREFUSED"));
 
 			await silentClient.getDeviceInfo();
 
@@ -195,7 +198,7 @@ describe("ApSystemsEz1Client", () => {
 		});
 
 		it("returns undefined on network error", async () => {
-			getStub.rejects(new Error("timeout of 5000ms exceeded"));
+			axiosGetStub.rejects(new Error("timeout of 5000ms exceeded"));
 
 			const result = await client.getOutputData();
 
@@ -203,11 +206,20 @@ describe("ApSystemsEz1Client", () => {
 		});
 
 		it("returns undefined on non-200 response", async () => {
-			getStub.resolves({ status: 503, statusText: "Service Unavailable", data: null });
+			axiosGetStub.resolves({ status: 503, statusText: "Service Unavailable", data: null });
 
 			const result = await client.getDeviceInfo();
 
 			expect(result).to.be.undefined;
+		});
+
+		it("retries up to MAX_RETRIES times before giving up", async () => {
+			axiosGetStub.rejects(new Error("ECONNREFUSED"));
+
+			await client.getDeviceInfo();
+
+			// 4 total calls: attempt 0, 1, 2, 3
+			expect(axiosGetStub.callCount).to.equal(4);
 		});
 	});
 });
