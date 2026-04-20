@@ -80,13 +80,44 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     });
     this.markStateCreated("connected");
     await this.setStateAsync("connected", { val: false, ack: true });
-    await Promise.all([
-      this.setDeviceInfoStates(),
-      this.setMaxPowerState(),
-      this.setOutputDataStates(),
-      this.setAlarmInfoStates(),
-      this.setOnOffStatusState()
-    ]);
+    await this.extendObjectAsync("OnOffStatus", { type: "channel", common: { name: "OnOffStatus" }, native: {} });
+    await this.extendObjectAsync("OnOffStatus.OnOffStatus", {
+      type: "state",
+      common: {
+        name: "OnOffStatus",
+        type: "boolean",
+        role: "switch",
+        read: true,
+        write: true
+      },
+      native: {}
+    });
+    this.markStateCreated("OnOffStatus.OnOffStatus");
+    await this.extendObjectAsync("MaxPower", { type: "channel", common: { name: "MaxPower" }, native: {} });
+    await this.extendObjectAsync("MaxPower.MaxPower", {
+      type: "state",
+      common: {
+        name: "MaxPower",
+        type: "number",
+        role: "value.power",
+        unit: "W",
+        read: true,
+        write: true
+      },
+      native: {}
+    });
+    this.markStateCreated("MaxPower.MaxPower");
+    try {
+      await Promise.all([
+        this.setDeviceInfoStates(),
+        this.setMaxPowerState(),
+        this.setOutputDataStates(),
+        this.setAlarmInfoStates(),
+        this.setOnOffStatusState()
+      ]);
+    } catch (e) {
+      this.log.error(`Initial poll failed unexpectedly: ${e}`);
+    }
     this.slowTimer = setInterval(() => {
       void this.setDeviceInfoStates();
       void this.setMaxPowerState();
@@ -103,7 +134,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     try {
       const deviceInfo = await this.apiClient.getDeviceInfo();
       this.log.debug("deviceInfo received");
-      if (deviceInfo !== void 0) {
+      if ((deviceInfo == null ? void 0 : deviceInfo.data) != null) {
         await this.setConnected(true);
         const res = deviceInfo.data;
         const stringPromises = _ApSystemsEz1.DEVICE_INFO_STRINGS.map(async (element) => {
@@ -123,6 +154,11 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
           await this.setStateAsync(stateId, { val: element.value(res), ack: true });
         });
         const numberPromises = _ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
+          const value = element.value(res);
+          if (!Number.isFinite(value)) {
+            this.log.error(`Invalid device limit for ${element.name}: ${value}`);
+            return;
+          }
           const stateId = `DeviceInfo.${element.name}`;
           if (!this.stateExists(stateId)) {
             this.markStateCreated(stateId);
@@ -136,7 +172,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
               }
             );
           }
-          await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+          await this.setStateAsync(stateId, { val: value, ack: true });
         });
         await Promise.all([...stringPromises, ...numberPromises]);
       } else {
@@ -151,9 +187,14 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     try {
       const outputData = await this.apiClient.getOutputData();
       this.log.debug("outputData received");
-      if (outputData !== void 0) {
+      if ((outputData == null ? void 0 : outputData.data) != null) {
         const res = outputData.data;
         const promises = _ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
+          const value = element.value(res);
+          if (!Number.isFinite(value)) {
+            this.log.error(`Invalid output data for ${element.name}: ${value}`);
+            return;
+          }
           const stateId = `OutputData.${element.name}`;
           if (!this.stateExists(stateId)) {
             this.markStateCreated(stateId);
@@ -167,7 +208,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
               }
             );
           }
-          await this.setStateAsync(stateId, { val: element.value(res), ack: true });
+          await this.setStateAsync(stateId, { val: value, ack: true });
         });
         await Promise.all(promises);
       } else {
@@ -182,7 +223,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     try {
       const alarmInfo = await this.apiClient.getAlarmInfo();
       this.log.debug("alarmInfo received");
-      if (alarmInfo !== void 0) {
+      if ((alarmInfo == null ? void 0 : alarmInfo.data) != null) {
         const res = alarmInfo.data;
         const promises = _ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
           const stateId = `AlarmInfo.${element.name}`;
@@ -219,7 +260,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     try {
       const onOffStatus = await this.apiClient.getOnOffStatus();
       this.log.debug("onOffStatus received");
-      if (onOffStatus !== void 0) {
+      if ((onOffStatus == null ? void 0 : onOffStatus.data) != null) {
         const res = onOffStatus.data;
         const stateId = "OnOffStatus.OnOffStatus";
         if (!this.stateExists(stateId)) {
@@ -252,7 +293,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     try {
       const maxPower = await this.apiClient.getMaxPower();
       this.log.debug("maxPower received");
-      if (maxPower !== void 0) {
+      if ((maxPower == null ? void 0 : maxPower.data) != null) {
         const res = maxPower.data;
         const powerValue = Number(res.maxPower);
         if (!Number.isFinite(powerValue)) {
@@ -290,6 +331,18 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
   markStateCreated(stateId) {
     this.createdStates.add(stateId);
   }
+  // Scripts, Blockly, and vis widgets frequently write numeric states as strings.
+  // Return the numeric value, or null when the input cannot be interpreted as a finite number.
+  coerceToFiniteNumber(val) {
+    if (typeof val === "number") {
+      return Number.isFinite(val) ? val : null;
+    }
+    if (typeof val === "string" && val.trim() !== "") {
+      const parsed = Number(val);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  }
   /**
    * Is called when adapter shuts down - callback has to be called under any circumstances!
    */
@@ -315,21 +368,22 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       this.writeQueue = this.writeQueue.then(() => this.applyOnOffStatus(target)).catch(() => {
       });
     } else if (id.endsWith(".MaxPower.MaxPower")) {
-      if (typeof state.val !== "number") {
-        this.log.error(`MaxPower: expected number, got ${typeof state.val}`);
+      const watts = this.coerceToFiniteNumber(state.val);
+      if (watts === null) {
+        this.log.error(`MaxPower: expected number, got ${typeof state.val} (${JSON.stringify(state.val)})`);
         return;
       }
-      const watts = state.val;
       this.writeQueue = this.writeQueue.then(() => this.validateAndSetMaxPower(watts)).catch(() => {
       });
     }
   }
   async applyOnOffStatus(on) {
     await this.apiClient.setOnOffStatus(on);
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 2e3));
     const confirmed = await this.apiClient.getOnOffStatus();
     if (!confirmed) {
       this.log.error(`OnOff command sent but could not verify device state`);
+      await this.setConnected(false);
       return;
     }
     const expected = on ? "0" : "1";
@@ -363,10 +417,11 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
       return;
     }
     await this.apiClient.setMaxPower(watts);
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 2e3));
     const confirmed = await this.apiClient.getMaxPower();
     if (!confirmed) {
       this.log.error(`MaxPower command sent but could not verify device state`);
+      await this.setConnected(false);
       return;
     }
     const actual = Number(confirmed.data.maxPower);

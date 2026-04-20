@@ -103,6 +103,38 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.markStateCreated("connected");
 		await this.setStateAsync("connected", { val: false, ack: true });
 
+		// Force-upgrade writable state objects so users migrating from older versions
+		// (where these were created read-only) get `write: true` applied to the
+		// existing object instead of the legacy createState no-op.
+		await this.extendObjectAsync("OnOffStatus", { type: "channel", common: { name: "OnOffStatus" }, native: {} });
+		await this.extendObjectAsync("OnOffStatus.OnOffStatus", {
+			type: "state",
+			common: {
+				name: "OnOffStatus",
+				type: "boolean",
+				role: "switch",
+				read: true,
+				write: true,
+			},
+			native: {},
+		});
+		this.markStateCreated("OnOffStatus.OnOffStatus");
+
+		await this.extendObjectAsync("MaxPower", { type: "channel", common: { name: "MaxPower" }, native: {} });
+		await this.extendObjectAsync("MaxPower.MaxPower", {
+			type: "state",
+			common: {
+				name: "MaxPower",
+				type: "number",
+				role: "value.power",
+				unit: "W",
+				read: true,
+				write: true,
+			},
+			native: {},
+		});
+		this.markStateCreated("MaxPower.MaxPower");
+
 		// Await initial polls so device limits are loaded before accepting writes.
 		// Wrapped defensively: poll methods catch internally, but setConnected() could throw
 		// if DB is unavailable — timers and subscriptions must still be set up regardless.
@@ -323,6 +355,19 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.createdStates.add(stateId);
 	}
 
+	// Scripts, Blockly, and vis widgets frequently write numeric states as strings.
+	// Return the numeric value, or null when the input cannot be interpreted as a finite number.
+	private coerceToFiniteNumber(val: unknown): number | null {
+		if (typeof val === "number") {
+			return Number.isFinite(val) ? val : null;
+		}
+		if (typeof val === "string" && val.trim() !== "") {
+			const parsed = Number(val);
+			return Number.isFinite(parsed) ? parsed : null;
+		}
+		return null;
+	}
+
 	/**
 	 * Is called when adapter shuts down - callback has to be called under any circumstances!
 	 */
@@ -350,11 +395,11 @@ class ApSystemsEz1 extends utils.Adapter {
 				.then(() => this.applyOnOffStatus(target))
 				.catch(() => { /* errors logged inside */ });
 		} else if (id.endsWith(".MaxPower.MaxPower")) {
-			if (typeof state.val !== "number") {
-				this.log.error(`MaxPower: expected number, got ${typeof state.val}`);
+			const watts = this.coerceToFiniteNumber(state.val);
+			if (watts === null) {
+				this.log.error(`MaxPower: expected number, got ${typeof state.val} (${JSON.stringify(state.val)})`);
 				return;
 			}
-			const watts = state.val;
 			this.writeQueue = this.writeQueue
 				.then(() => this.validateAndSetMaxPower(watts))
 				.catch(() => { /* errors logged inside */ });
