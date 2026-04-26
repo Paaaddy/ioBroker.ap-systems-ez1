@@ -89,7 +89,7 @@ class ApSystemsEz1 extends utils.Adapter {
 		this.pollIntervalInMilliSeconds = pollInterval * 1000;
 		this.apiClient = new ApSystemsEz1Client(this.log, this.config.ipAddress, this.config.port, this.config?.ignoreConnectionErrorMessages);
 
-		await this.extendObjectAsync("connected", {
+		await this.setObjectAsync("connected", {
 			type: "state",
 			common: {
 				name: "Connected",
@@ -146,7 +146,7 @@ class ApSystemsEz1 extends utils.Adapter {
 					const stateId = `DeviceInfo.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
-						await this.extendObjectAsync(stateId, {
+						await this.setObjectAsync(stateId, {
 							type: "state",
 							common: { name: element.name, type: "string", role: "text", read: true, write: false },
 							native: {},
@@ -164,7 +164,7 @@ class ApSystemsEz1 extends utils.Adapter {
 					const stateId = `DeviceInfo.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
-						await this.extendObjectAsync(stateId, {
+						await this.setObjectAsync(stateId, {
 							type: "state",
 							common: { name: element.name, type: "number", role: element.role, unit: element.unit, read: true, write: false },
 							native: {},
@@ -200,7 +200,7 @@ class ApSystemsEz1 extends utils.Adapter {
 					const stateId = `OutputData.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
-						await this.extendObjectAsync(stateId, {
+						await this.setObjectAsync(stateId, {
 							type: "state",
 							common: { name: element.name, type: "number", role: element.role, unit: element.unit, read: true, write: false },
 							native: {},
@@ -231,7 +231,7 @@ class ApSystemsEz1 extends utils.Adapter {
 					const stateId = `AlarmInfo.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
-						await this.extendObjectAsync(stateId, {
+						await this.setObjectAsync(stateId, {
 							type: "state",
 							common: { name: element.name, type: "string", role: "text", read: true, write: false },
 							native: {},
@@ -266,7 +266,7 @@ class ApSystemsEz1 extends utils.Adapter {
 				const stateId = "OnOffStatus.OnOffStatus";
 				if (!this.stateExists(stateId)) {
 					this.markStateCreated(stateId);
-					await this.extendObjectAsync(stateId, {
+					await this.setObjectAsync(stateId, {
 						type: "state",
 						common: { name: "OnOffStatus", type: "boolean", role: "switch", read: true, write: true },
 						native: {},
@@ -302,7 +302,7 @@ class ApSystemsEz1 extends utils.Adapter {
 				const stateId = "MaxPower.MaxPower";
 				if (!this.stateExists(stateId)) {
 					this.markStateCreated(stateId);
-					await this.extendObjectAsync(stateId, {
+					await this.setObjectAsync(stateId, {
 						type: "state",
 						common: { name: "MaxPower", type: "number", role: "value.power", unit: "W", read: true, write: true },
 						native: {},
