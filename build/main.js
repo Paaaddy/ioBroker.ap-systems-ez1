@@ -34,6 +34,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     // 1 hour
     // Serializes write commands — prevents concurrent device commands from racing
     this.writeQueue = Promise.resolve();
+    this.lastConnectedLogged = void 0;
     /**
      * Cache to track which states have been created to avoid repeated getStateAsync calls.
      */
@@ -118,6 +119,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     } catch (e) {
       this.log.error(`Initial poll failed unexpectedly: ${e}`);
     }
+    await this.logBootSummary();
     this.slowTimer = setInterval(() => {
       void this.setDeviceInfoStates();
       void this.setMaxPowerState();
@@ -193,7 +195,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const promises = _ApSystemsEz1.OUTPUT_DATA_NUMBERS.map(async (element) => {
           const value = element.value(res);
           if (!Number.isFinite(value)) {
-            this.log.error(`Invalid output data for ${element.name}: ${value}`);
+            this.log.error(`Invalid output data for ${element.name}: ${JSON.stringify(value)} (type ${typeof value})`);
             return;
           }
           const stateId = `OutputData.${element.name}`;
@@ -242,7 +244,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
           }
           const rawValue = element.value(res);
           if (rawValue !== "0" && rawValue !== "1") {
-            this.log.error(`Unexpected alarm value for ${element.name}: ${rawValue}`);
+            this.log.error(`Unexpected alarm value for ${element.name}: ${JSON.stringify(rawValue)} (type ${typeof rawValue}, expected "0" or "1")`);
             return;
           }
           const value = rawValue === "0" ? "Normal" : "Alarm";
@@ -277,7 +279,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
           );
         }
         if (res.status !== "0" && res.status !== "1") {
-          this.log.error(`Unexpected OnOffStatus from device: ${res.status}`);
+          this.log.error(`Unexpected OnOffStatus from device: ${JSON.stringify(res.status)} (type ${typeof res.status}, expected "0" or "1")`);
           return;
         }
         const value = res.status === "0";
@@ -298,7 +300,7 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const res = maxPower.data;
         const powerValue = Number(res.maxPower);
         if (!Number.isFinite(powerValue)) {
-          this.log.error(`Invalid maxPower from device: ${res.maxPower}`);
+          this.log.error(`Invalid maxPower from device: ${JSON.stringify(res.maxPower)} (type ${typeof res.maxPower})`);
           return;
         }
         const stateId = "MaxPower.MaxPower";
@@ -324,7 +326,36 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     }
   }
   async setConnected(connected) {
+    if (this.lastConnectedLogged !== connected) {
+      if (connected) {
+        this.log.info(`Connected to inverter at ${this.config.ipAddress}:${this.config.port}`);
+      } else if (this.lastConnectedLogged === true) {
+        this.log.warn(`Lost connection to inverter at ${this.config.ipAddress}:${this.config.port}`);
+      }
+      this.lastConnectedLogged = connected;
+    }
     await this.setStateAsync("connected", { val: connected, ack: true });
+  }
+  async logBootSummary() {
+    try {
+      const [deviceId, devVer, minPower, maxPower, currentCap, onOff] = await Promise.all([
+        this.getStateAsync("DeviceInfo.DeviceId"),
+        this.getStateAsync("DeviceInfo.DevVer"),
+        this.getStateAsync("DeviceInfo.MinPower"),
+        this.getStateAsync("DeviceInfo.MaxPower"),
+        this.getStateAsync("MaxPower.MaxPower"),
+        this.getStateAsync("OnOffStatus.OnOffStatus")
+      ]);
+      const fmt = (s) => {
+        if (s == null || s.val == null) return "unknown";
+        return String(s.val);
+      };
+      this.log.info(
+        `Adapter ready. Device ${fmt(deviceId)} (firmware ${fmt(devVer)}) at ${this.config.ipAddress}:${this.config.port}; on=${fmt(onOff)}; limits=${fmt(minPower)}-${fmt(maxPower)}W; current cap=${fmt(currentCap)}W`
+      );
+    } catch (e) {
+      this.log.warn(`Could not assemble boot summary: ${e}`);
+    }
   }
   stateExists(stateId) {
     return this.createdStates.has(stateId);
