@@ -25,9 +25,12 @@ class ApSystemsEz1 extends utils.Adapter {
 		{ name: "IpAddr", value: (res: any) => res.ipAddr },
 	];
 
+	// /getDeviceInfo returns minPower/maxPower as strings (e.g. "30", "800") per OpenAPI;
+	// `value` coerces so the Number.isFinite() guard below accepts them. `raw` preserves
+	// the original payload so the diagnostic log can show the device's actual response.
 	private static readonly DEVICE_INFO_NUMBERS = [
-		{ name: "MaxPower", value: (res: any) => res.maxPower },
-		{ name: "MinPower", value: (res: any) => res.minPower },
+		{ name: "MaxPower", raw: (res: any) => res.maxPower, value: (res: any) => Number(res.maxPower) },
+		{ name: "MinPower", raw: (res: any) => res.minPower, value: (res: any) => Number(res.minPower) },
 	];
 
 	private static readonly OUTPUT_DATA_NUMBERS = [
@@ -188,7 +191,8 @@ class ApSystemsEz1 extends utils.Adapter {
 				const numberPromises = ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
 					const value = element.value(res);
 					if (!Number.isFinite(value)) {
-						this.log.error(`Invalid device limit for ${element.name}: ${value}`);
+						const raw = element.raw(res);
+						this.log.error(`Invalid device limit for ${element.name}: ${JSON.stringify(raw)} (type ${typeof raw})`);
 						return;
 					}
 					const stateId = `DeviceInfo.${element.name}`;
@@ -440,7 +444,11 @@ class ApSystemsEz1 extends utils.Adapter {
 		const max = typeof maxState?.val === "number" && Number.isFinite(maxState.val) ? maxState.val : null;
 
 		if (min === null || max === null) {
-			this.log.error(`MaxPower ${watts}W rejected: device power limits not yet loaded`);
+			this.log.error(
+				`MaxPower ${watts}W rejected: device limits unavailable ` +
+				`(MinPower=${min === null ? "missing" : min}, MaxPower=${max === null ? "missing" : max}). ` +
+				`Check earlier setDeviceInfoStates errors and that /getDeviceInfo is reachable.`,
+			);
 			return;
 		}
 		if (watts < min) {

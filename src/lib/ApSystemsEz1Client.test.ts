@@ -49,7 +49,7 @@ describe("ApSystemsEz1Client", () => {
 
 	it("uses correct base URL and configures timeout 5000", async () => {
 		axiosGetStub.resolves(axiosOk(dto<ReturnDeviceInfo>({
-			deviceId: "X", devVer: "1", ssid: "net", ipAddr: "192.168.1.100", minPower: 30, maxPower: 800,
+			deviceId: "X", devVer: "1", ssid: "net", ipAddr: "192.168.1.100", minPower: "30", maxPower: "800",
 		})));
 
 		await client.getDeviceInfo();
@@ -64,15 +64,15 @@ describe("ApSystemsEz1Client", () => {
 		it("returns typed DTO with all fields", async () => {
 			const data: ReturnDeviceInfo = {
 				deviceId: "ABC123", devVer: "1.0.0", ssid: "MyNet",
-				ipAddr: "192.168.1.100", minPower: 30, maxPower: 800,
+				ipAddr: "192.168.1.100", minPower: "30", maxPower: "800",
 			};
 			axiosGetStub.resolves(axiosOk(dto(data)));
 
 			const result = await client.getDeviceInfo();
 
 			expect(result?.data.deviceId).to.equal("ABC123");
-			expect(result?.data.maxPower).to.equal(800);
-			expect(result?.data.minPower).to.equal(30);
+			expect(result?.data.maxPower).to.equal("800");
+			expect(result?.data.minPower).to.equal("30");
 		});
 	});
 

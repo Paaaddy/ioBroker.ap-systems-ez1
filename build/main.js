@@ -156,7 +156,8 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
         const numberPromises = _ApSystemsEz1.DEVICE_INFO_NUMBERS.map(async (element) => {
           const value = element.value(res);
           if (!Number.isFinite(value)) {
-            this.log.error(`Invalid device limit for ${element.name}: ${value}`);
+            const raw = element.raw(res);
+            this.log.error(`Invalid device limit for ${element.name}: ${JSON.stringify(raw)} (type ${typeof raw})`);
             return;
           }
           const stateId = `DeviceInfo.${element.name}`;
@@ -405,7 +406,9 @@ const _ApSystemsEz1 = class _ApSystemsEz1 extends utils.Adapter {
     const min = typeof (minState == null ? void 0 : minState.val) === "number" && Number.isFinite(minState.val) ? minState.val : null;
     const max = typeof (maxState == null ? void 0 : maxState.val) === "number" && Number.isFinite(maxState.val) ? maxState.val : null;
     if (min === null || max === null) {
-      this.log.error(`MaxPower ${watts}W rejected: device power limits not yet loaded`);
+      this.log.error(
+        `MaxPower ${watts}W rejected: device limits unavailable (MinPower=${min === null ? "missing" : min}, MaxPower=${max === null ? "missing" : max}). Check earlier setDeviceInfoStates errors and that /getDeviceInfo is reachable.`
+      );
       return;
     }
     if (watts < min) {
@@ -472,9 +475,12 @@ _ApSystemsEz1.DEVICE_INFO_STRINGS = [
   { name: "Ssid", value: (res) => res.ssid },
   { name: "IpAddr", value: (res) => res.ipAddr }
 ];
+// /getDeviceInfo returns minPower/maxPower as strings (e.g. "30", "800") per OpenAPI;
+// `value` coerces so the Number.isFinite() guard below accepts them. `raw` preserves
+// the original payload so the diagnostic log can show the device's actual response.
 _ApSystemsEz1.DEVICE_INFO_NUMBERS = [
-  { name: "MaxPower", value: (res) => res.maxPower },
-  { name: "MinPower", value: (res) => res.minPower }
+  { name: "MaxPower", raw: (res) => res.maxPower, value: (res) => Number(res.maxPower) },
+  { name: "MinPower", raw: (res) => res.minPower, value: (res) => Number(res.minPower) }
 ];
 _ApSystemsEz1.OUTPUT_DATA_NUMBERS = [
   { name: "CurrentPower_1", role: "value.power", unit: "W", value: (res) => res.p1 },

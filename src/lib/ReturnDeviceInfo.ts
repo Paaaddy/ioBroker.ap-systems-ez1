@@ -13,8 +13,10 @@ export interface ReturnDeviceInfo {
 	ipAddr: string;
 
 	// The minimum power output that the device can be set to, measured in watts.
-	minPower: number;
+	// API returns this as a string (e.g. "30") — coerce with Number() before arithmetic.
+	minPower: string;
 
 	// The maximum power output that the device can be set to, measured in watts.
-	maxPower: number;
+	// API returns this as a string (e.g. "800") — coerce with Number() before arithmetic.
+	maxPower: string;
 }

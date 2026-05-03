@@ -82,3 +82,32 @@ describe("coerceToFiniteNumber", () => {
 		expect(coerceToFiniteNumber({})).to.equal(null);
 	});
 });
+
+// /getDeviceInfo returns minPower/maxPower as strings ("30", "800") per OpenAPI.
+// DEVICE_INFO_NUMBERS in main.ts wraps the extractor in Number() so the subsequent
+// Number.isFinite() guard accepts string-typed limits. Without this coercion,
+// DeviceInfo.MinPower / DeviceInfo.MaxPower never get populated, and every
+// MaxPower write is rejected by validateAndSetMaxPower (LeoTronick issue #17).
+describe("DeviceInfo limit coercion", () => {
+	const extractMaxPower = (res: any): number => Number(res.maxPower);
+	const extractMinPower = (res: any): number => Number(res.minPower);
+
+	it("converts API string limits to finite numbers", () => {
+		const res = { maxPower: "800", minPower: "30" };
+		expect(extractMaxPower(res)).to.equal(800);
+		expect(extractMinPower(res)).to.equal(30);
+		expect(Number.isFinite(extractMaxPower(res))).to.equal(true);
+		expect(Number.isFinite(extractMinPower(res))).to.equal(true);
+	});
+
+	it("accepts numeric payloads (defensive against firmware variation)", () => {
+		const res = { maxPower: 800, minPower: 30 };
+		expect(extractMaxPower(res)).to.equal(800);
+		expect(extractMinPower(res)).to.equal(30);
+	});
+
+	it("returns NaN for non-numeric strings and undefined, rejected by isFinite", () => {
+		expect(Number.isFinite(extractMaxPower({ maxPower: "abc" }))).to.equal(false);
+		expect(Number.isFinite(extractMaxPower({}))).to.equal(false);
+	});
+});
