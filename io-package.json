@@ -1,8 +1,21 @@
 {
 	"common": {
 		"name": "ap-systems-ez1",
-		"version": "0.1.0",
+		"version": "0.1.1",
 		"news": {
+			"0.1.1": {
+				"en": "performance and hardware safety improvements: connected-state dedup, in-memory device limits, type-safe state mappings, write verification null guard",
+				"de": "Leistungs- und Gerätesicherheitsverbesserungen: verbundener Zustand Entduplizierung, In-Memory-Gerätegrenzen, typsichere Zustandszuordnungen, Schreibverifizierungs-Nullschutz",
+				"ru": "улучшения производительности и аппаратной безопасности",
+				"pt": "melhorias de desempenho e segurança de hardware",
+				"nl": "prestatie- en hardwareveiligheidsverbeteringen",
+				"fr": "améliorations de performances et de sécurité matérielle",
+				"it": "miglioramenti delle prestazioni e della sicurezza hardware",
+				"es": "mejoras de rendimiento y seguridad de hardware",
+				"pl": "ulepszenia wydajności i bezpieczeństwa sprzętowego",
+				"uk": "покращення продуктивності та апаратної безпеки",
+				"zh-cn": "性能和硬件安全改进"
+			},
 			"0.1.0": {
 				"en": "error message when connection fails fixed",
 				"de": "fehlermeldung beim ausfall der verbindung",

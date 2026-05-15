@@ -53,7 +53,7 @@ export class ApSystemsEz1Client {
 				await new Promise(resolve => setTimeout(resolve, delayMs));
 				return this.getRequest<TResult>(endpoint, attempt + 1);
 			}
-			await this.handleClientError(error);
+			this.handleClientError(error);
 		}
 	}
 
@@ -74,7 +74,7 @@ export class ApSystemsEz1Client {
 
 			return response.data as TResult;
 		} catch (error) {
-			await this.handleClientError(error);
+			this.handleClientError(error);
 		}
 	}
 
@@ -108,7 +108,7 @@ export class ApSystemsEz1Client {
 		return this.setRequest<TypedReturnDto<ReturnOnOffStatus>>(`setOnOff?${params}`);
 	}
 
-	private async handleClientError(error: unknown): Promise<void> {
+	private handleClientError(error: unknown): void {
 		if (this.ignoreConnectionErrorMessages) {
 			return;
 		} else if (error instanceof Error) {

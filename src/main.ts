@@ -5,10 +5,13 @@
 import * as utils from "@iobroker/adapter-core";
 import net from "net";
 import { ApSystemsEz1Client } from "./lib/ApSystemsEz1Client";
+import { ReturnDeviceInfo } from "./lib/ReturnDeviceInfo";
+import { ReturnOutputData } from "./lib/ReturnOutputData";
+import { ReturnAlarmInfo } from "./lib/ReturnAlarmInfo";
 
 class ApSystemsEz1 extends utils.Adapter {
 
-	private pollIntervalInMilliSeconds: number = 60;
+	private pollIntervalInMilliSeconds = 0;
 	private apiClient!: ApSystemsEz1Client;
 	private timer: NodeJS.Timeout | undefined;
 	private slowTimer: NodeJS.Timeout | undefined;
@@ -17,36 +20,43 @@ class ApSystemsEz1 extends utils.Adapter {
 	// Serializes write commands — prevents concurrent device commands from racing
 	private writeQueue: Promise<void> = Promise.resolve();
 
+	// In-memory device limits loaded on startup; required before any MaxPower write is accepted
+	private deviceMinPower: number | null = null;
+	private deviceMaxPower: number | null = null;
+
+	// Avoid redundant state DB writes when connected status hasn't changed
+	private lastConnected: boolean | undefined;
+
 	// State mappings cached to avoid object allocation on every poll cycle
-	private static readonly DEVICE_INFO_STRINGS = [
-		{ name: "DeviceId", value: (res: any) => res.deviceId },
-		{ name: "DevVer", value: (res: any) => res.devVer },
-		{ name: "Ssid", value: (res: any) => res.ssid },
-		{ name: "IpAddr", value: (res: any) => res.ipAddr },
+	private static readonly DEVICE_INFO_STRINGS: Array<{ name: string; value: (res: ReturnDeviceInfo) => string }> = [
+		{ name: "DeviceId", value: (res) => res.deviceId },
+		{ name: "DevVer",   value: (res) => res.devVer },
+		{ name: "Ssid",     value: (res) => res.ssid },
+		{ name: "IpAddr",   value: (res) => res.ipAddr },
 	];
 
-	private static readonly DEVICE_INFO_NUMBERS = [
-		{ name: "MaxPower", value: (res: any) => res.maxPower },
-		{ name: "MinPower", value: (res: any) => res.minPower },
+	private static readonly DEVICE_INFO_NUMBERS: Array<{ name: string; value: (res: ReturnDeviceInfo) => number }> = [
+		{ name: "MaxPower", value: (res) => res.maxPower },
+		{ name: "MinPower", value: (res) => res.minPower },
 	];
 
-	private static readonly OUTPUT_DATA_NUMBERS = [
-		{ name: "CurrentPower_1",      role: "value.power",  unit: "W",   value: (res: any) => res.p1 },
-		{ name: "CurrentPower_2",      role: "value.power",  unit: "W",   value: (res: any) => res.p2 },
-		{ name: "CurrentPower_Total",  role: "value.power",  unit: "W",   value: (res: any) => res.p1 + res.p2 },
-		{ name: "EnergyToday_1",       role: "value.energy", unit: "kWh", value: (res: any) => res.e1 },
-		{ name: "EnergyToday_2",       role: "value.energy", unit: "kWh", value: (res: any) => res.e2 },
-		{ name: "EnergyToday_Total",   role: "value.energy", unit: "kWh", value: (res: any) => res.e1 + res.e2 },
-		{ name: "EnergyLifetime_1",    role: "value.energy", unit: "kWh", value: (res: any) => res.te1 },
-		{ name: "EnergyLifetime_2",    role: "value.energy", unit: "kWh", value: (res: any) => res.te2 },
-		{ name: "EnergyLifetime_Total",role: "value.energy", unit: "kWh", value: (res: any) => res.te1 + res.te2 },
+	private static readonly OUTPUT_DATA_NUMBERS: Array<{ name: string; role: string; unit: string; value: (res: ReturnOutputData) => number }> = [
+		{ name: "CurrentPower_1",       role: "value.power",  unit: "W",   value: (res) => res.p1 },
+		{ name: "CurrentPower_2",       role: "value.power",  unit: "W",   value: (res) => res.p2 },
+		{ name: "CurrentPower_Total",   role: "value.power",  unit: "W",   value: (res) => res.p1 + res.p2 },
+		{ name: "EnergyToday_1",        role: "value.energy", unit: "kWh", value: (res) => res.e1 },
+		{ name: "EnergyToday_2",        role: "value.energy", unit: "kWh", value: (res) => res.e2 },
+		{ name: "EnergyToday_Total",    role: "value.energy", unit: "kWh", value: (res) => res.e1 + res.e2 },
+		{ name: "EnergyLifetime_1",     role: "value.energy", unit: "kWh", value: (res) => res.te1 },
+		{ name: "EnergyLifetime_2",     role: "value.energy", unit: "kWh", value: (res) => res.te2 },
+		{ name: "EnergyLifetime_Total", role: "value.energy", unit: "kWh", value: (res) => res.te1 + res.te2 },
 	];
 
-	private static readonly ALARM_INFO_NUMBERS = [
-		{ name: "OffGrid",           value: (res: any) => res.og },
-		{ name: "ShortCircuitError_1", value: (res: any) => res.isce1 },
-		{ name: "ShortCircuitError_2", value: (res: any) => res.isce2 },
-		{ name: "OutputFault",       value: (res: any) => res.oe },
+	private static readonly ALARM_INFO_STATES: Array<{ name: string; value: (res: ReturnAlarmInfo) => string }> = [
+		{ name: "OffGrid",             value: (res) => res.og },
+		{ name: "ShortCircuitError_1", value: (res) => res.isce1 },
+		{ name: "ShortCircuitError_2", value: (res) => res.isce2 },
+		{ name: "OutputFault",         value: (res) => res.oe },
 	];
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
@@ -56,8 +66,6 @@ class ApSystemsEz1 extends utils.Adapter {
 		});
 		this.on("ready", this.onReady.bind(this));
 		this.on("stateChange", this.onStateChange.bind(this));
-		// this.on("objectChange", this.onObjectChange.bind(this));
-		// this.on("message", this.onMessage.bind(this));
 		this.on("unload", this.onUnload.bind(this));
 	}
 
@@ -202,6 +210,17 @@ class ApSystemsEz1 extends utils.Adapter {
 				});
 
 				await Promise.all([...stringPromises, ...numberPromises]);
+
+				// Cache device limits in-memory so writes don't need async DB roundtrips
+				if (Number.isFinite(res.minPower)) this.deviceMinPower = res.minPower;
+				if (Number.isFinite(res.maxPower)) this.deviceMaxPower = res.maxPower;
+
+				// Expose bounds on the writable MaxPower state so admin UI shows valid range
+				if (this.deviceMinPower !== null && this.deviceMaxPower !== null) {
+					await this.extendObjectAsync("MaxPower.MaxPower", {
+						common: { min: this.deviceMinPower, max: this.deviceMaxPower },
+					} as Partial<ioBroker.StateObject>);
+				}
 			} else {
 				await this.setConnected(false);
 			}
@@ -253,7 +272,7 @@ class ApSystemsEz1 extends utils.Adapter {
 			if (alarmInfo?.data != null) {
 				const res = alarmInfo.data;
 
-				const promises = ApSystemsEz1.ALARM_INFO_NUMBERS.map(async (element) => {
+				const promises = ApSystemsEz1.ALARM_INFO_STATES.map(async (element) => {
 					const stateId = `AlarmInfo.${element.name}`;
 					if (!this.stateExists(stateId)) {
 						this.markStateCreated(stateId);
@@ -339,6 +358,8 @@ class ApSystemsEz1 extends utils.Adapter {
 	}
 
 	private async setConnected(connected: boolean): Promise<void> {
+		if (this.lastConnected === connected) return;
+		this.lastConnected = connected;
 		await this.setStateAsync("connected", { val: connected, ack: true });
 	}
 
@@ -413,7 +434,7 @@ class ApSystemsEz1 extends utils.Adapter {
 		// 2000ms allows slow devices time to apply before we poll for confirmation.
 		await new Promise(r => setTimeout(r, 2000));
 		const confirmed = await this.apiClient.getOnOffStatus();
-		if (!confirmed) {
+		if (!confirmed?.data) {
 			this.log.error(`OnOff command sent but could not verify device state`);
 			await this.setConnected(false);
 			return;
@@ -434,10 +455,8 @@ class ApSystemsEz1 extends utils.Adapter {
 			return;
 		}
 
-		const minState = await this.getStateAsync("DeviceInfo.MinPower");
-		const maxState = await this.getStateAsync("DeviceInfo.MaxPower");
-		const min = typeof minState?.val === "number" && Number.isFinite(minState.val) ? minState.val : null;
-		const max = typeof maxState?.val === "number" && Number.isFinite(maxState.val) ? maxState.val : null;
+		const min = this.deviceMinPower;
+		const max = this.deviceMaxPower;
 
 		if (min === null || max === null) {
 			this.log.error(`MaxPower ${watts}W rejected: device power limits not yet loaded`);
@@ -458,7 +477,7 @@ class ApSystemsEz1 extends utils.Adapter {
 		// 2000ms allows slow devices time to apply before we poll for confirmation.
 		await new Promise(r => setTimeout(r, 2000));
 		const confirmed = await this.apiClient.getMaxPower();
-		if (!confirmed) {
+		if (!confirmed?.data) {
 			this.log.error(`MaxPower command sent but could not verify device state`);
 			await this.setConnected(false);
 			return;
@@ -473,38 +492,6 @@ class ApSystemsEz1 extends utils.Adapter {
 		}
 		this.log.info(`MaxPower set to ${watts}W`);
 	}
-
-	// If you need to react to object changes, uncomment the following block and the corresponding line in the constructor.
-	// You also need to subscribe to the objects with `this.subscribeObjects`, similar to `this.subscribeStates`.
-	// /**
-	//  * Is called if a subscribed object changes
-	//  */
-	// private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
-	// 	if (obj) {
-	// 		// The object was changed
-	// 		this.log.info(`object ${id} changed: ${JSON.stringify(obj)}`);
-	// 	} else {
-	// 		// The object was deleted
-	// 		this.log.info(`object ${id} deleted`);
-	// 	}
-	// }
-
-	// If you need to accept messages in your adapter, uncomment the following block and the corresponding line in the constructor.
-	// /**
-	//  * Some message was sent to this instance over message box. Used by email, pushover, text2speech, ...
-	//  * Using this method requires "common.messagebox" property to be set to true in io-package.json
-	//  */
-	// private onMessage(obj: ioBroker.Message): void {
-	// 	if (typeof obj === "object" && obj.message) {
-	// 		if (obj.command === "send") {
-	// 			// e.g. send email or pushover or whatever
-	// 			this.log.info("send command");
-
-	// 			// Send response in callback if required
-	// 			if (obj.callback) this.sendTo(obj.from, obj.command, "Message received", obj.callback);
-	// 		}
-	// 	}
-	// }
 
 }
 
