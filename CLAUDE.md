@@ -110,3 +110,24 @@ Device endpoints (base `http://<ip>:8050`):
 ## Release flow
 
 `npm run release` is wired with `@alcalzone/release-script` plus the `iobroker`, `license`, and `manual-review` plugins (see `.releaseconfig.json`). It updates `package.json`, `io-package.json` `common.news`, and README changelog together — keep those three in sync when bumping versions manually.
+
+## gstack
+
+This repo is set up for use with [gstack](https://github.com/anthropics/gstack) skills. The most relevant skills for this adapter:
+
+- `/ship` — bump VERSION, update CHANGELOG, commit, push, open a PR. Pair with `/land-and-deploy` to merge once CI is green.
+- `/review` — pre-landing diff review against the base branch (SQL safety, trust boundaries, conditional side effects, structural issues).
+- `/codex` — independent second opinion via the OpenAI Codex CLI (review / challenge / consult modes).
+- `/investigate` — root-cause debugging loop. Use this for "the adapter stopped reading the inverter" type bugs rather than guessing fixes.
+- `/qa` and `/qa-only` — systematic UI testing with iterative bug fixing (or report-only). Limited utility here since the adapter is headless; mostly applies to admin/jsonConfig.json changes rendered in the ioBroker admin UI.
+- `/health` — composite code-quality dashboard wrapping `tsc --noEmit`, ESLint, and Mocha.
+- `/retro` — weekly engineering retrospective over commit history.
+- `/context-save` / `/context-restore` — persist working state across sessions.
+
+### `/browse`
+
+`/browse` is gstack's headless-browser tool for QA, screenshots, and dogfooding live web flows. This adapter has no web UI of its own — the only browser-testable surface is the ioBroker admin panel rendered from `admin/jsonConfig.json`. Use `/browse` when verifying admin-UI changes against a running ioBroker dev-server; skip it for pure backend changes to `src/lib/ApSystemsEz1Client.ts` or `src/main.ts`.
+
+### `/guard` (recommended)
+
+When touching hardware-control code paths — anything that issues `setOnOffStatus` or `setMaxPower` to the inverter, or modifies the write queue / post-write verification logic in `src/main.ts` — run `/guard` first. It combines `/careful` (warns before destructive shell commands) and `/freeze` (scopes edits to a chosen directory) so an exploratory debugging session can't accidentally rewrite the client's no-retry semantics or leak edits into `build/`. Recommended freeze scope for this repo: `src/`.
