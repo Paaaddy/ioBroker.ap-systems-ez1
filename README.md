@@ -2,7 +2,8 @@
 
 # ioBroker.ap-systems-ez1
 
-[![CI](https://github.com/Paaaddy/ioBroker.ap-systems-ez1/actions/workflows/ci.yml/badge.svg)](https://github.com/Paaaddy/ioBroker.ap-systems-ez1/actions/workflows/ci.yml)
+> **⚠️ Archived.** This fork is no longer maintained here. All fixes have been merged upstream — use [LeoTronick/ioBroker.ap-systems-ez1](https://github.com/LeoTronick/ioBroker.ap-systems-ez1) for active development, issues, and the current npm-published adapter.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Fork** of [tobiasexner/ioBroker.ap-systems-ez1](https://github.com/tobiasexner/ioBroker.ap-systems-ez1) by [Tobias Exner](https://github.com/tobiasexner). Original implementation is his. This fork adds write API support (power limit + on/off control) and an improved CI pipeline.
